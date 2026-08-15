@@ -97,6 +97,7 @@ export function AllFilesPage() {
   const [copiedShareLink, setCopiedShareLink] = useState(false)
   const [copiedDriveLink, setCopiedDriveLink] = useState(false)
   const [revokingShare, setRevokingShare] = useState(false)
+  const [regeneratingShare, setRegeneratingShare] = useState(false)
   const [previewUrl, setPreviewUrl] = useState('')
   const [previewError, setPreviewError] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -623,6 +624,23 @@ export function AllFilesPage() {
     }
   }
 
+  async function regenerateShareLink() {
+    if (!activeFile?.id) return
+    setRegeneratingShare(true)
+    try {
+      // Revoking first is what makes the old link stop working; POST then issues a new token.
+      await apiFetch(`/files/${activeFile.id}/share`, { method: 'DELETE' })
+      const data = await apiFetch<{ url: string }>(`/files/${activeFile.id}/share`, { method: 'POST' })
+      setShareUrl(data.url)
+      setCopiedShareLink(false)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to regenerate the link')
+      setTimeout(() => setMessage(''), 3000)
+    } finally {
+      setRegeneratingShare(false)
+    }
+  }
+
   async function copyDriveLink() {
     await navigator.clipboard.writeText(gdrivePublicUrl)
     setCopiedDriveLink(true)
@@ -835,8 +853,14 @@ export function AllFilesPage() {
       <DummyModal open={shareOpen} title="Share Link" description={activeFile?.name ?? ''} onClose={() => setShareOpen(false)}>
         <div className="grid gap-4">
           <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">9Drive Public Share Link (No GDrive login required)</label>
-            <Input value={shareUrl} readOnly />
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="text-xs font-bold text-slate-500">9Drive Public Share Link (No GDrive login required)</label>
+              <button type="button" onClick={regenerateShareLink} disabled={regeneratingShare} title="Issue a new link and kill the current one" className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+                <RefreshCw className={regeneratingShare ? 'h-3 w-3 animate-spin' : 'h-3 w-3'} />
+                {regeneratingShare ? 'Working...' : 'Regenerate'}
+              </button>
+            </div>
+            <Input value={shareUrl} readOnly placeholder="No active link" />
           </div>
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={() => setShareOpen(false)}>Close</Button>
