@@ -13,6 +13,15 @@ export function errorMiddleware(error: unknown, _req: Request, res: Response, _n
     })
   }
 
+  // Errors we raise on purpose may carry the status they deserve.
+  const status = (error as { status?: number })?.status
+  if (typeof status === 'number' && status >= 400 && status < 600) {
+    return res.status(status).json({
+      code: (error as { code?: string })?.code ?? 'REQUEST_FAILED',
+      message: error instanceof Error ? error.message : 'Request failed.',
+    })
+  }
+
   const code = (error as { code?: string })?.code
   if (code === 'P2025') {
     return res.status(404).json({ code: 'NOT_FOUND', message: 'Resource not found.' })

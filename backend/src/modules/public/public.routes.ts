@@ -10,7 +10,11 @@ async function findSharedFile(token: string) {
     where: { enabled: true, AND: [{ OR: [{ token }, { tokenHash: hashToken(token) }] }, { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }] },
     include: { file: { include: { connectedAccount: true } } },
   })
-  if (!share || share.file.status !== 'active') throw new Error('Shared file not found')
+  if (!share || share.file.status !== 'active') {
+    // A revoked or expired link is a missing resource, not a server fault.
+    const error = Object.assign(new Error('This share link is no longer available.'), { status: 404, code: 'SHARE_NOT_FOUND' })
+    throw error
+  }
   return share.file
 }
 
