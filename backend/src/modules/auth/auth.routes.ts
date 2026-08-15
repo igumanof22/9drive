@@ -74,7 +74,10 @@ authRouter.get('/google/url', async (_req, res, next) => {
     const client = createOAuthClient(config)
     const url = client.generateAuthUrl({
       access_type: 'offline',
-      prompt: 'consent',
+      // Only pick the account; forcing 'consent' would re-ask for permissions on every
+      // login. The callback falls back to the stored refresh token, and asks for consent
+      // explicitly when there is none.
+      prompt: 'select_account',
       include_granted_scopes: true,
       scope: config.scopes as string[],
       state,

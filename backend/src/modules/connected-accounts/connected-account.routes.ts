@@ -200,8 +200,21 @@ connectedAccountRouter.get('/google/callback', async (req, res, next) => {
       const existingAccount = await prisma.connectedAccount.findUnique({ where: { userId_provider_providerAccountId: { userId: user.id, provider: 'google_drive', providerAccountId } } })
       const refreshTokenEncrypted = tokens.refresh_token ? encryptText(tokens.refresh_token) : existingAccount?.refreshTokenEncrypted
       if (!refreshTokenEncrypted) {
-        console.error('Google login failed: no refresh token received and no existing account. Has refresh_token:', !!tokens.refresh_token)
-        return res.redirect(`${env.FRONTEND_URL}/google-auth?status=error`)
+        // Google hands out a refresh token only on the first authorization. If the user
+        // revoked or disconnected earlier we have nothing stored, and a plain re-login
+        // would fail forever. Ask for consent once instead of dead-ending.
+        const retryState = randomToken()
+        await prisma.oauthState.create({
+          data: { providerConfigId: oauthState.providerConfigId, flow: 'login', stateHash: hashToken(retryState), expiresAt: new Date(Date.now() + 10 * 60_000) },
+        })
+        const retryClient = createOAuthClient(oauthState.providerConfig)
+        return res.redirect(retryClient.generateAuthUrl({
+          access_type: 'offline',
+          prompt: 'consent',
+          include_granted_scopes: true,
+          scope: oauthState.providerConfig.scopes as string[],
+          state: retryState,
+        }))
       }
       const account = await prisma.connectedAccount.upsert({
         where: { userId_provider_providerAccountId: { userId: user.id, provider: 'google_drive', providerAccountId } },
