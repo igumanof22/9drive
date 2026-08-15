@@ -18,6 +18,7 @@ export type FileItem = {
   access: string
   accountEmail?: string
   accountAvatarUrl?: string
+  accountProviderId?: string
   accountProvider?: string
   createdAt?: string
   kind: 'doc' | 'image' | 'video' | 'pdf'
