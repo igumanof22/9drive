@@ -188,13 +188,13 @@ section.bg-white:not(button):not(.popover-surface) {
 }
 
 /* Hover effects for background classes */
+/* Colour comes from the theme token; dimming the whole element also dimmed its text,
+   which read as a hover state that did not belong to the theme. */
 .hover\:bg-slate-100:hover {
   background-color: var(--slate-100-override) !important;
-  opacity: 0.9;
 }
 .hover\:bg-slate-200:hover {
   background-color: var(--slate-200-override) !important;
-  opacity: 0.95;
 }
 
 /* Base Text Color Overrides */
