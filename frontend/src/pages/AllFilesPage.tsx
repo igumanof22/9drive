@@ -95,6 +95,7 @@ export function AllFilesPage() {
   const [shareOpen, setShareOpen] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [copiedShareLink, setCopiedShareLink] = useState(false)
+  const [copiedDriveLink, setCopiedDriveLink] = useState(false)
   const [previewUrl, setPreviewUrl] = useState('')
   const [previewError, setPreviewError] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -525,6 +526,7 @@ export function AllFilesPage() {
     const data = await apiFetch<{ url: string }>(`/files/${activeFile.id}/share`, { method: 'POST' })
     setShareUrl(data.url)
     setCopiedShareLink(false)
+    setCopiedDriveLink(false)
     setGdrivePublicUrl('')
     setMakingPublic(false)
     setPublicRole('none')
@@ -603,6 +605,12 @@ export function AllFilesPage() {
     await navigator.clipboard.writeText(shareUrl)
     setCopiedShareLink(true)
     window.setTimeout(() => setCopiedShareLink(false), 1600)
+  }
+
+  async function copyDriveLink() {
+    await navigator.clipboard.writeText(gdrivePublicUrl)
+    setCopiedDriveLink(true)
+    window.setTimeout(() => setCopiedDriveLink(false), 1600)
   }
 
   async function renameFolder(event: FormEvent) {
@@ -863,7 +871,7 @@ export function AllFilesPage() {
               {publicRole !== 'none' && gdrivePublicUrl ? (
                 <div className="grid gap-2">
                   <Input value={gdrivePublicUrl} readOnly />
-                  <Button type="button" variant="outline" onClick={async () => { await navigator.clipboard.writeText(gdrivePublicUrl); setMessage('Google Drive link copied!'); setTimeout(() => setMessage(''), 2500) }}>Copy Google Drive link</Button>
+                  <Button type="button" variant="outline" onClick={copyDriveLink}>{copiedDriveLink ? <CheckCircle className="h-4 w-4" /> : null}{copiedDriveLink ? 'Copied!' : 'Copy Google Drive link'}</Button>
                 </div>
               ) : null}
               {publicRole === 'writer' ? <p className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">Anyone with this link can change or delete the file contents.</p> : null}
