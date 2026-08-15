@@ -22,7 +22,7 @@ import type { FileItem, FolderItem } from '@/data/drive-data'
 import { useUpload } from '@/context/UploadContext'
 import { useDriveLayoutActions } from '@/layouts/DriveLayout'
 
-type BackendFile = { id: string; name: string; mimeType: string; sizeBytes: string; createdAt: string; folderId?: string | null; connectedAccount?: { email: string; provider: string; avatarUrl?: string | null }; folder?: { id: string; name: string } | null }
+type BackendFile = { id: string; name: string; publicRole?: 'reader' | 'commenter' | 'writer' | null; mimeType: string; sizeBytes: string; createdAt: string; folderId?: string | null; connectedAccount?: { email: string; provider: string; avatarUrl?: string | null }; folder?: { id: string; name: string } | null }
 type BackendFolder = { id: string; name: string; color: string; iconUrl?: string | null; parentId?: string | null; providerFolderId?: string | null; updatedAt: string }
 type ConnectedAccount = { id: string; provider: string; email: string; displayName?: string | null; status: string }
 
@@ -55,7 +55,7 @@ function providerLabel(provider: string | undefined) {
 }
 
 function mapFile(file: BackendFile): FileItem {
-  return { id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, createdAt: file.createdAt, accountEmail: file.connectedAccount?.email, accountAvatarUrl: file.connectedAccount?.avatarUrl ?? undefined, accountProvider: providerLabel(file.connectedAccount?.provider), accountProviderId: file.connectedAccount?.provider, date: formatDate(file.createdAt), size: formatBytes(file.sizeBytes), access: file.connectedAccount?.email ?? providerLabel(file.connectedAccount?.provider), kind: mimeToKind(file.mimeType), shared: 1, folderId: file.folderId, folderName: file.folder?.name }
+  return { id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, createdAt: file.createdAt, accountEmail: file.connectedAccount?.email, accountAvatarUrl: file.connectedAccount?.avatarUrl ?? undefined, accountProvider: providerLabel(file.connectedAccount?.provider), accountProviderId: file.connectedAccount?.provider, publicRole: file.publicRole ?? null, date: formatDate(file.createdAt), size: formatBytes(file.sizeBytes), access: file.connectedAccount?.email ?? providerLabel(file.connectedAccount?.provider), kind: mimeToKind(file.mimeType), shared: 1, folderId: file.folderId, folderName: file.folder?.name }
 }
 
 function mapFolder(folder: BackendFolder): FolderItem {
@@ -840,9 +840,11 @@ export function AllFilesPage() {
                     if (next === 'none') {
                       await apiFetch(`/files/${activeFile.id}/public-permission`, { method: 'DELETE' })
                       setGdrivePublicUrl('')
+                      await loadFiles()
                     } else {
                       const res = await apiFetch<{ url: string }>(`/files/${activeFile.id}/public-permission`, { method: 'POST', body: JSON.stringify({ role: next }) })
                       setGdrivePublicUrl(res.url)
+                      await loadFiles()
                     }
                   } catch (error) {
                     setPublicRole(previous)

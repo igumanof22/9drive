@@ -215,6 +215,7 @@ model File {
   sizeBytes          BigInt           @map("size_bytes")
   checksum           String?          @db.VarChar(191)
   status             String           @default("active") @db.VarChar(32)
+  publicRole         String?          @map("public_role") @db.VarChar(16)
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
   deletedAt          DateTime?        @map("deleted_at")

@@ -1,4 +1,5 @@
 import { MoreVertical } from 'lucide-react'
+import { PublicBadge } from '@/components/drive/PublicBadge'
 import type { MouseEvent } from 'react'
 import { Card } from '@/components/ui/card'
 import { FileIcon } from '@/components/drive/FileIcon'
@@ -123,6 +124,7 @@ export function FileGrid({
               <div className={cn("flex flex-wrap justify-center font-semibold text-slate-600", cfg.tagsShell)}>
                 <span className={cn("rounded-full bg-slate-100", cfg.tag)}>{file.size}</span>
                 <span className={cn("max-w-full truncate rounded-full bg-slate-100", cfg.tag)}>{file.access}</span>
+                <PublicBadge role={file.publicRole} />
               </div>
             </div>
           </Card>

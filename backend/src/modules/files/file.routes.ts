@@ -424,6 +424,7 @@ fileRouter.post('/:id/public-permission', async (req: AuthRequest, res, next) =>
     }
     await drive.permissions.create({ fileId: file.providerFileId, requestBody: { role: body.role, type: 'anyone' } })
     const metadata = await drive.files.get({ fileId: file.providerFileId, fields: 'webViewLink,webContentLink' })
+    await prisma.file.update({ where: { id: file.id }, data: { publicRole: body.role } })
     await createAuditLog(req.user!.id, 'SET_FILE_PUBLIC_ACCESS', 'file', file.id, { name: file.name, role: body.role })
     return res.json({ status: 'ok', role: body.role, url: metadata.data.webViewLink ?? metadata.data.webContentLink })
   } catch (error) {
@@ -439,6 +440,7 @@ fileRouter.delete('/:id/public-permission', async (req: AuthRequest, res, next) 
     for (const permission of anyone) {
       await drive.permissions.delete({ fileId: file.providerFileId, permissionId: permission.id })
     }
+    await prisma.file.update({ where: { id: file.id }, data: { publicRole: null } })
     await createAuditLog(req.user!.id, 'REVOKE_FILE_PUBLIC_ACCESS', 'file', file.id, { name: file.name, revoked: anyone.length })
     return res.json({ status: 'ok', revoked: anyone.length })
   } catch (error) {

@@ -33,6 +33,7 @@ async function main() {
         await drive.permissions.delete({ fileId: file.providerFileId, permissionId: permission.id! })
         revoked += 1
       }
+      await prisma.file.update({ where: { id: file.id }, data: { publicRole: null } })
     } catch (error: any) {
       failed += 1
       console.error(`failed on ${file.name}: ${error.message || error}`)

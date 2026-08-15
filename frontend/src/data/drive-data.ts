@@ -19,6 +19,7 @@ export type FileItem = {
   accountEmail?: string
   accountAvatarUrl?: string
   accountProviderId?: string
+  publicRole?: 'reader' | 'commenter' | 'writer' | null
   accountProvider?: string
   createdAt?: string
   kind: 'doc' | 'image' | 'video' | 'pdf'

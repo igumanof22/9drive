@@ -1,6 +1,7 @@
 import { FolderOpen, MoreVertical, Star } from 'lucide-react'
 import { type MouseEvent, useState } from 'react'
 import { AccountAvatar } from '@/components/drive/AccountAvatar'
+import { PublicBadge } from '@/components/drive/PublicBadge'
 import { FileIcon } from '@/components/drive/FileIcon'
 import type { FileItem } from '@/data/drive-data'
 import { apiFetch } from '@/lib/api'
@@ -27,7 +28,7 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
                 {onToggleFile ? <input type="checkbox" className="h-4 w-4 shrink-0 accent-blue-600" checked={selected} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} /> : null}
                 <div className="shrink-0">{mode === 'starred' ? <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" /> : <FileIcon kind={file.kind} />}</div>
                 <div className="min-w-0 flex-1 overflow-hidden">
-                  <h3 className="truncate text-sm font-bold leading-snug text-slate-950" title={file.name}>{file.name}</h3>
+                  <div className="flex min-w-0 items-center gap-1.5"><h3 className="truncate text-sm font-bold leading-snug text-slate-950" title={file.name}>{file.name}</h3><PublicBadge role={file.publicRole} /></div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
                     <span>{meta}</span>
                     <span>·</span>
@@ -69,6 +70,7 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
                   <span className="flex min-w-0 items-center gap-2.5">
                     {mode === 'starred' ? <Star className="h-4 w-4 shrink-0 fill-yellow-400 text-yellow-400" /> : <FileIcon kind={file.kind} />}
                     <span className="truncate max-w-[200px] lg:max-w-[280px]" title={file.name}>{file.name}</span>
+                    <PublicBadge role={file.publicRole} />
                   </span>
                 </td>
                 {/* Folder path column — only in default mode */}
