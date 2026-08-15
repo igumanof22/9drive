@@ -9,6 +9,9 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-this-database-password}
     volumes:
       - mysql_data:/var/lib/mysql
+    ports:
+      # Bound to loopback only: reachable from a local DB client, never from the network.
+      - "127.0.0.1:3307:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 5s
@@ -34,6 +37,10 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:4000/connected-accounts/google/callback}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      # Without this the backend skips captcha verification entirely, so the widget
+      # on the register page would look protective while verifying nothing.
+      RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
     ports:
       - "4000:4000"
 

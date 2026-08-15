@@ -246,6 +246,16 @@ Google Drive API has not been used in project ... before or it is disabled.
 APIs & Services -> OAuth consent screen
 ```
 
+Google has reorganised this area into **Google Auth Platform**. On the current console the
+same settings live under separate tabs:
+
+```txt
+Branding        app name, support email, developer contact
+Audience        app type (External), publishing status, test users
+Data Access     OAuth scopes
+Clients         OAuth client IDs, redirect URIs
+```
+
 2. Choose app type:
 
 ```txt
@@ -260,7 +270,8 @@ User support email
 Developer contact email
 ```
 
-4. Add scopes:
+4. Add scopes. On the current console this is **Google Auth Platform -> Data Access ->
+Add or Remove Scopes**:
 
 ```txt
 https://www.googleapis.com/auth/drive
@@ -417,9 +428,27 @@ RECAPTCHA_SECRET_KEY=
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:4000/connected-accounts/google/callback
+
+ADMIN_EMAIL=
 ```
 
 Captcha is disabled when either `VITE_RECAPTCHA_SITE_KEY` or `RECAPTCHA_SECRET_KEY` is empty.
+
+`ADMIN_EMAIL` restricts the administrative sections of Settings (Google OAuth credentials,
+System Update, Backup & Restore) to a single account. Leave it empty to let every signed-in
+user reach them.
+
+**Behind a reverse proxy, the backend lives under `/api`.** The bundled `nginx.conf` proxies
+`/api/` to the backend, so a domain deployment must use the `/api` prefix in the redirect URI
+and register that exact URL in Google Cloud Console:
+
+```env
+FRONTEND_URL=https://your-domain
+GOOGLE_REDIRECT_URI=https://your-domain/api/connected-accounts/google/callback
+```
+
+One redirect URI covers both flows: signing in with Google and connecting an extra Drive
+account are told apart by the OAuth state, not by the callback path.
 
 ### 2. Start Containers
 
@@ -432,8 +461,12 @@ Services:
 ```txt
 frontend: http://localhost:5173
 backend:  http://localhost:4000
-mysql:    localhost:3306
+mysql:    127.0.0.1:3307
 ```
+
+MySQL is published on `127.0.0.1` only, so a local database client can reach it while
+the network cannot. Port 3307 avoids clashing with a MySQL server already running on
+the host. Remove the `ports` entry of the `mysql` service if you do not need it.
 
 The backend container runs Prisma migrations automatically on startup:
 
