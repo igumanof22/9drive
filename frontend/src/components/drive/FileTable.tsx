@@ -34,6 +34,7 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
                     <span>{file.size}</span>
                     {file.folderName && <><span>·</span><span className="flex items-center gap-0.5 text-blue-500"><FolderOpen className="h-3 w-3" />{file.folderName}</span></>}
                   </div>
+                  {file.accountEmail && <p className="mt-0.5 truncate text-xs text-slate-400" title={file.accountEmail}>{file.accountEmail}</p>}
                 </div>
                 <button className="-mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100" onClick={(event) => { event.stopPropagation(); onFileContextMenu?.(event, file) }} aria-label={`Open ${file.name} menu`}><MoreVertical className="h-4 w-4" /></button>
               </div>
@@ -56,7 +57,7 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
               {mode === 'archived' ? <th className="py-2.5 font-extrabold">Archived Date</th> : null}
               {mode === 'archived' ? <th className="py-2.5 font-extrabold">Original Location</th> : <th className="py-2.5 font-extrabold">Last Modified</th>}
               <th className="py-2.5 font-extrabold">Size</th>
-              <th className="py-2.5 font-extrabold">Access</th>
+              <th className="py-2.5 font-extrabold">{mode === 'shared' ? 'Access' : 'Drive Account'}</th>
               <th className="py-2.5" />
             </tr>
           </thead>

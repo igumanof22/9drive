@@ -19,6 +19,9 @@
   --input-bg: rgba(255, 255, 255, 0.5);
   --input-border: rgba(255, 255, 255, 0.6);
   --input-focus-bg: rgba(255, 255, 255, 0.85);
+  --popover-bg: #ffffff;
+  --scrollbar-thumb: rgba(15, 23, 42, 0.22);
+  --scrollbar-thumb-hover: rgba(15, 23, 42, 0.38);
   --shadow-color: rgba(0, 0, 0, 0.02);
   --shadow-hover: rgba(0, 0, 0, 0.04);
   --active-nav-bg: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(99, 102, 241, 0.08) 100%);
@@ -59,6 +62,9 @@
   --input-bg: rgba(255, 255, 255, 0.04);
   --input-border: rgba(255, 255, 255, 0.08);
   --input-focus-bg: rgba(255, 255, 255, 0.08);
+  --popover-bg: #111a2e;
+  --scrollbar-thumb: rgba(148, 163, 184, 0.32);
+  --scrollbar-thumb-hover: rgba(148, 163, 184, 0.5);
   --shadow-color: rgba(0, 0, 0, 0.3);
   --shadow-hover: rgba(0, 0, 0, 0.4);
   --active-nav-bg: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(244, 63, 94, 0.05) 100%);
@@ -121,8 +127,8 @@ section.min-w-0 {
 }
 
 /* Override solid bg-white on containers to keep glass effect */
-div.bg-white:not(button),
-section.bg-white:not(button) {
+div.bg-white:not(button):not(.popover-surface),
+section.bg-white:not(button):not(.popover-surface) {
   background-color: transparent !important;
 }
 
@@ -206,10 +212,10 @@ aside {
 }
 
 /* Glass Cards and Info Panels */
-.rounded-xl.border-slate-200,
-.rounded-2xl.border-slate-200,
-div.border.border-slate-200,
-.card {
+.rounded-xl.border-slate-200:not(.popover-surface),
+.rounded-2xl.border-slate-200:not(.popover-surface),
+div.border.border-slate-200:not(.popover-surface),
+.card:not(.popover-surface) {
   background: var(--card-bg) !important;
   backdrop-filter: blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
@@ -220,8 +226,8 @@ div.border.border-slate-200,
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.rounded-xl.border-slate-200:hover,
-.rounded-2xl.border-slate-200:hover {
+.rounded-xl.border-slate-200:not(.popover-surface):hover,
+.rounded-2xl.border-slate-200:not(.popover-surface):hover {
   background: var(--card-bg) !important;
   filter: brightness(1.05);
   border-color: var(--outline-btn-border) !important;
@@ -409,4 +415,49 @@ aside .card button.text-orange-600:hover {
   border-color: rgba(239, 68, 68, 0.3) !important;
   color: #ff8787 !important;
   transform: translateY(-1px);
+}
+
+
+/* Floating panels must stay readable: they overlap page content, so the glass and
+   outline-button rules above would let that content bleed through the text.
+   Kept last in the file, with a doubled class, so it wins on both specificity and
+   order against every .border-slate-200 / .rounded-2xl rule above. */
+.popover-surface.popover-surface,
+.popover-surface.popover-surface:hover {
+  background: var(--popover-bg) !important;
+  background-color: var(--popover-bg) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: none;
+  color: var(--text-primary);
+}
+.popover-surface .text-slate-950,
+.popover-surface .text-slate-900,
+.popover-surface .text-slate-800,
+.popover-surface .text-slate-700 {
+  color: var(--text-primary) !important;
+}
+.popover-surface .text-slate-600,
+.popover-surface .text-slate-500,
+.popover-surface .text-slate-400 {
+  color: var(--text-secondary) !important;
+}
+.popover-surface *,
+.popover-surface {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.popover-surface ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.popover-surface ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.popover-surface ::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+.popover-surface ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }

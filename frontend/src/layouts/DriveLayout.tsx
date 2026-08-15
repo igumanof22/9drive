@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu,
   Moon,
-  MoreVertical,
   Search,
   Settings,
   Share2,
@@ -57,11 +56,11 @@ type StorageBreakdown = {
   document: string
 }
 
-function SystemInfoDropdown({ storage }: { storage: any }) {
+function SystemInfoDropdown({ storage, isAdmin }: { storage: any; isAdmin: boolean }) {
   const activeGoogle = storage?.accounts?.filter((a: any) => a.provider === 'google_drive' && a.status === 'connected') ?? []
 
   return (
-    <div className="absolute right-0 top-12 z-50 w-[min(calc(100vw-2rem),22rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/15">
+    <div className="popover-surface absolute right-0 top-12 z-50 w-[min(calc(100vw-2rem),22rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/15">
       <div className="border-b border-slate-200 px-4 py-3 bg-slate-50/50">
         <p className="text-sm font-extrabold text-slate-950">Workspace Status & Info</p>
         <p className="text-xs text-slate-500">Overview of your connections & guidelines</p>
@@ -87,8 +86,11 @@ function SystemInfoDropdown({ storage }: { storage: any }) {
         <div>
           <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5 text-blue-500" /> Storage Engine</h4>
           <div className="mt-2 text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-            <p>• <b>DB Type:</b> SQLite (Local Database)</p>
-            <p>• <b>Upload Folder:</b> Google Drive dedicated <code>9drive</code></p>
+            {/* Backend internals stay with the administrator. */}
+            {isAdmin ? <>
+              <p>• <b>DB Type:</b> MySQL (Docker)</p>
+              <p>• <b>Upload Folder:</b> Google Drive dedicated <code>9drive</code></p>
+            </> : null}
             <p>• <b>Max Upload Size:</b> 5 GB per stream</p>
           </div>
         </div>
@@ -97,7 +99,7 @@ function SystemInfoDropdown({ storage }: { storage: any }) {
         <div>
           <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><Info className="h-3.5 w-3.5 text-indigo-500" /> Usage Tips</h4>
           <ul className="mt-2 text-[11px] text-slate-500 list-disc list-inside space-y-1 pl-1">
-            <li>Virtual folders exist only in your SQLite database.</li>
+            <li>Virtual folders exist only in the 9Drive database, not on Drive.</li>
             <li>Physical files are always uploaded straight to Google Drive.</li>
             <li>Use the Sync button to fetch changes made directly on Drive.</li>
           </ul>
@@ -122,8 +124,14 @@ function Sidebar({ onNavigate, user, storage, breakdown, onLogout }: { onNavigat
 
   useEffect(() => {
     setAvatarError(false)
+    // The connected Google account already gives us a real photo; Gravatar/DiceBear
+    // is only the fallback for accounts that never connected a provider.
+    if (user?.avatarUrl) {
+      setProfileImageUrl(user.avatarUrl)
+      return
+    }
     getGravatarUrl(user?.email, 64).then(setProfileImageUrl).catch(() => setProfileImageUrl(''))
-  }, [user?.email])
+  }, [user?.email, user?.avatarUrl])
 
   return (
     <aside className="flex h-full w-64 flex-col border-slate-200/60 bg-slate-50/40 backdrop-blur-xl p-4 lg:border-r">
@@ -149,7 +157,6 @@ function Sidebar({ onNavigate, user, storage, breakdown, onLogout }: { onNavigat
           <p className="truncate text-[15px] font-bold text-slate-900 leading-none">{user?.name ?? 'User'}</p>
           <p className="truncate text-xs text-slate-500 mt-1">{user?.email ?? 'Loading...'}</p>
         </div>
-        <MoreVertical className="h-4 w-4 text-slate-400" />
       </div>
 
       <nav className="grid gap-1">
@@ -214,6 +221,17 @@ export function DriveLayout() {
   const [storage, setStorage] = useState<StorageSummary | null>(null)
   const [breakdown, setBreakdown] = useState<StorageBreakdown>({ photo: '0', video: '0', document: '0' })
   const [infoOpen, setInfoOpen] = useState(false)
+
+  // Close the panel on any click outside it, not just on the bell button.
+  useEffect(() => {
+    if (!infoOpen) return
+    function closeOnOutsideClick(event: MouseEvent) {
+      if ((event.target as HTMLElement).closest('[data-system-info]')) return
+      setInfoOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick)
+  }, [infoOpen])
   const [headerActions, setHeaderActions] = useState<ReactNode>(null)
   const { uploadProgress, setUploadProgress, retryFailedUpload } = useUpload()
   const [uploadProgressCollapsed, setUploadProgressCollapsed] = useState(false)
@@ -413,12 +431,12 @@ export function DriveLayout() {
                 <Button variant="outline" size="icon" aria-label="Toggle theme" onClick={toggleTheme}>
                   {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
                 </Button>
-                <div className="relative shrink-0">
+                <div className="relative shrink-0" data-system-info>
                   <Button variant="outline" size="icon" className="relative" aria-label="System info" aria-expanded={infoOpen} onClick={() => setInfoOpen(!infoOpen)}>
                     <Bell className="h-5 w-5" />
                     {!infoOpen ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-blue-600" /> : null}
                   </Button>
-                  {infoOpen ? <SystemInfoDropdown storage={storage} /> : null}
+                  {infoOpen ? <SystemInfoDropdown storage={storage} isAdmin={user?.isAdmin !== false} /> : null}
                 </div>
               </div>
             </div>
@@ -495,7 +513,7 @@ export function DriveLayout() {
                 {headerActions}
               </div>
             ) : null}
-             <div className="relative hidden flex-wrap gap-2 lg:flex shrink-0">
+             <div className="relative hidden flex-wrap gap-2 lg:flex shrink-0" data-system-info>
               <Button variant="outline" size="icon" aria-label="Toggle theme" onClick={toggleTheme}>
                 {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
               </Button>
@@ -503,7 +521,7 @@ export function DriveLayout() {
                 <Bell className="h-5 w-5" />
                 {!infoOpen ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-blue-600" /> : null}
               </Button>
-              {infoOpen ? <SystemInfoDropdown storage={storage} /> : null}
+              {infoOpen ? <SystemInfoDropdown storage={storage} isAdmin={user?.isAdmin !== false} /> : null}
             </div>
           </header>
           <Outlet context={{ setHeaderActions } satisfies DriveLayoutContext} />
