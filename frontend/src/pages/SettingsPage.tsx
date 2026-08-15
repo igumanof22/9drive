@@ -51,6 +51,9 @@ export function SettingsPage() {
   const [hasSecret, setHasSecret] = useState(false)
   const [savingGoogleConfig, setSavingGoogleConfig] = useState(false)
   const [showGoogleHelp, setShowGoogleHelp] = useState(false)
+  // Names the setting, never the account: the address stays out of the UI and the
+  // label keeps telling the truth when ADMIN_EMAIL is pointed somewhere else.
+  const adminOnlyNote = <span className="shrink-0 rounded-full border border-slate-200 dark:border-slate-800 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400" title="Restricted to the account configured in the ADMIN_EMAIL environment variable">Admin only · ADMIN_EMAIL</span>
 
   // Live log polling states
   const [isPollingLog, setIsPollingLog] = useState(false)
@@ -415,11 +418,12 @@ export function SettingsPage() {
             </div>
           </Card>
 
-          <Card className="p-4">
+          {user?.isAdmin === false ? null : <Card className="p-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
               <div className="flex items-center gap-2.5">
                 <Cloud className="h-5 w-5 text-blue-600" />
                 <h2 className="text-[17px] font-bold">Google OAuth Credentials</h2>
+                {adminOnlyNote}
               </div>
               <Button
                 variant="outline"
@@ -450,7 +454,9 @@ export function SettingsPage() {
               </div>
             )}
 
-            <form onSubmit={saveGoogleConfig} className="grid gap-3.5">
+            {/* autoComplete is off everywhere here: a password manager filling the secret
+                field silently replaces working credentials the moment Save is pressed. */}
+            <form onSubmit={saveGoogleConfig} className="grid gap-3.5" autoComplete="off">
               <label className="grid gap-1.5 text-xs font-bold text-slate-500">
                 Client ID
                 <input
@@ -458,6 +464,10 @@ export function SettingsPage() {
                   placeholder="Enter Google Client ID"
                   value={googleClientId}
                   onChange={(e) => setGoogleClientId(e.target.value)}
+                  name="google-oauth-client-id"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore
                   required
                 />
               </label>
@@ -470,6 +480,10 @@ export function SettingsPage() {
                   placeholder={hasSecret ? "••••••••••••••••••••••••" : "Enter Google Client Secret"}
                   value={googleClientSecret}
                   onChange={(e) => setGoogleClientSecret(e.target.value)}
+                  name="google-oauth-client-secret"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  data-1p-ignore
                   required={!hasSecret}
                 />
               </label>
@@ -481,6 +495,10 @@ export function SettingsPage() {
                   placeholder={defaultRedirectUri}
                   value={googleRedirectUri}
                   onChange={(e) => setGoogleRedirectUri(e.target.value)}
+                  name="google-oauth-redirect-uri"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore
                 />
               </label>
 
@@ -490,14 +508,15 @@ export function SettingsPage() {
                 </Button>
               </div>
             </form>
-          </Card>
+          </Card>}
 
-          <Card className="overflow-hidden p-3.5">
+          {user?.isAdmin === false ? null : <><Card className="overflow-hidden p-3.5">
             <div className="flex flex-col gap-3.5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2.5">
                   <RefreshCw className="h-5 w-5 text-blue-600" />
                   <h2 className="text-[16px] font-bold">System Update</h2>
+                  {adminOnlyNote}
                 </div>
                 <p className="mt-1 text-[13px] text-slate-500">
                   Pull the latest code from GitHub. Dev servers will automatically restart.
@@ -522,8 +541,9 @@ export function SettingsPage() {
                 <div className="flex items-center gap-2.5">
                   <Database className="h-5 w-5 text-blue-600" />
                   <h2 className="text-[16px] font-bold">Backup & Restore Database</h2>
+                  {adminOnlyNote}
                 </div>
-                <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">SQLite Local Database</span>
+                <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">MySQL Database</span>
               </div>
 
               <div className="grid gap-5 sm:grid-cols-2">
@@ -601,7 +621,7 @@ export function SettingsPage() {
                 </p>
               )}
             </div>
-          </Card>
+          </Card></>}
         </div>
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 lg:gap-3">
           <Card className="p-4"><HardDrive className="h-5 w-5 text-blue-600" /><h2 className="mt-2 text-[14px] font-bold">Storage</h2><p className="mt-1 text-[12px] text-slate-500">Connected accounts: {accounts.length}</p></Card>

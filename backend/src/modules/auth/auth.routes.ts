@@ -7,6 +7,7 @@ import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.
 import { hashPassword, verifyPassword } from '../../utils/password.js'
 import { encryptText, hashToken, randomToken } from '../../utils/crypto.js'
 import { signAccessToken } from '../../utils/jwt.js'
+import { isAdminEmail } from '../../utils/admin.js'
 import { createOAuthClient, syncGoogleQuota } from '../google/google.service.js'
 
 export const authRouter = Router()
@@ -193,7 +194,12 @@ authRouter.post('/logout', requireAuth, async (req: AuthRequest, res, next) => {
 authRouter.get('/me', requireAuth, async (req: AuthRequest, res, next) => {
   try {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: req.user!.id }, select: { id: true, name: true, email: true, status: true } })
-    return res.json({ user })
+    const account = await prisma.connectedAccount.findFirst({
+      where: { userId: user.id, status: 'connected', avatarUrl: { not: null } },
+      orderBy: { createdAt: 'asc' },
+      select: { avatarUrl: true },
+    })
+    return res.json({ user: { ...user, avatarUrl: account?.avatarUrl ?? null, isAdmin: isAdminEmail(user.email) } })
   } catch (error) {
     return next(error)
   }

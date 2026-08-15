@@ -2,15 +2,27 @@ import { Router } from 'express'
 import { exec, spawn } from 'child_process'
 import path from 'path'
 import fs from 'fs'
-import { requireAuth } from '../../middleware/auth.middleware.js'
+import type { NextFunction, Response } from 'express'
+import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { prisma } from '../../config/prisma.js'
 import { decryptText, encryptText } from '../../utils/crypto.js'
+import { isAdminEmail } from '../../utils/admin.js'
 import Busboy from 'busboy'
 
 export const systemRouter = Router()
 
+// Everything under /system is instance-wide administration: updates, database backup and
+// restore, OAuth credentials. Guarding the router keeps new endpoints protected by default.
+async function requireAdmin(req: AuthRequest, res: Response, next: NextFunction) {
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { email: true } })
+  if (!isAdminEmail(user?.email)) return res.status(403).json({ code: 'FORBIDDEN', message: 'Administrator access required.' })
+  return next()
+}
 
-systemRouter.post('/update', requireAuth, (req, res, next) => {
+systemRouter.use(requireAuth, requireAdmin)
+
+
+systemRouter.post('/update',(req, res, next) => {
   const projectRoot = path.resolve(process.cwd(), '..')
   const updateScript = path.join(projectRoot, 'update.sh')
 
@@ -76,7 +88,7 @@ systemRouter.post('/update', requireAuth, (req, res, next) => {
   })
 })
 
-systemRouter.get('/update-log', requireAuth, (req, res) => {
+systemRouter.get('/update-log',(req, res) => {
   const projectRoot = path.resolve(process.cwd(), '..')
   const logFile = path.join(projectRoot, 'update.log')
 
@@ -100,14 +112,16 @@ systemRouter.get('/update-log', requireAuth, (req, res) => {
   }
 })
 
-systemRouter.get('/google-config', requireAuth, async (req, res, next) => {
+systemRouter.get('/google-config',async (req, res, next) => {
   try {
     const config = await prisma.providerConfig.findFirst({
       where: { userId: null, provider: 'google_drive', status: 'active' },
       orderBy: { createdAt: 'desc' }
     })
 
-    const defaultRedirect = `${req.protocol}://${req.get('host')}/connected-accounts/google/callback`
+    // Behind the Docker nginx proxy the backend lives under /api, which the request
+    // itself cannot reveal. GOOGLE_REDIRECT_URI is the deployment's own answer.
+    const defaultRedirect = process.env.GOOGLE_REDIRECT_URI?.trim() || `${req.protocol}://${req.get('host')}/connected-accounts/google/callback`
 
     if (!config) {
       return res.json({
@@ -135,7 +149,7 @@ systemRouter.get('/google-config', requireAuth, async (req, res, next) => {
   }
 })
 
-systemRouter.post('/google-config', requireAuth, async (req, res, next) => {
+systemRouter.post('/google-config',async (req, res, next) => {
   try {
     const { clientId, clientSecret, redirectUri } = req.body
 
@@ -143,7 +157,9 @@ systemRouter.post('/google-config', requireAuth, async (req, res, next) => {
       return res.status(400).json({ code: 'BAD_REQUEST', message: 'Client ID is required.' })
     }
 
-    const defaultRedirect = `${req.protocol}://${req.get('host')}/connected-accounts/google/callback`
+    // Behind the Docker nginx proxy the backend lives under /api, which the request
+    // itself cannot reveal. GOOGLE_REDIRECT_URI is the deployment's own answer.
+    const defaultRedirect = process.env.GOOGLE_REDIRECT_URI?.trim() || `${req.protocol}://${req.get('host')}/connected-accounts/google/callback`
     const finalRedirectUri = redirectUri || defaultRedirect
 
     const scopes = [
@@ -200,7 +216,7 @@ systemRouter.post('/google-config', requireAuth, async (req, res, next) => {
   }
 })
 
-systemRouter.get('/backup', requireAuth, (req, res, next) => {
+systemRouter.get('/backup',(req, res, next) => {
   try {
     const dbPath = getDatabaseFilePath()
     if (!fs.existsSync(dbPath)) {
@@ -215,7 +231,7 @@ systemRouter.get('/backup', requireAuth, (req, res, next) => {
   }
 })
 
-systemRouter.post('/restore', requireAuth, (req, res, next) => {
+systemRouter.post('/restore',(req, res, next) => {
   try {
     const contentType = req.headers['content-type']
     if (!contentType?.includes('multipart/form-data')) {
