@@ -238,40 +238,39 @@ If Google Drive API is disabled, you will see an error like:
 Google Drive API has not been used in project ... before or it is disabled.
 ```
 
-### 6.3 Configure OAuth Consent Screen
+### 6.3 Configure The OAuth Consent Screen
 
-1. Go to:
-
-```txt
-APIs & Services -> OAuth consent screen
-```
-
-Google has reorganised this area into **Google Auth Platform**. On the current console the
-same settings live under separate tabs:
+Google moved these settings into **Google Auth Platform**. The old
+`APIs & Services -> OAuth consent screen` link now redirects there, and the single
+configuration page is split into tabs:
 
 ```txt
 Branding        app name, support email, developer contact
-Audience        app type (External), publishing status, test users
+Audience        app type (External), test users, publishing status
 Data Access     OAuth scopes
 Clients         OAuth client IDs, redirect URIs
 ```
 
-2. Choose app type:
+1. Go to:
 
 ```txt
-External
+Google Auth Platform
 ```
 
-3. Fill required fields:
+2. First time in a project, click `Get started` and complete the four steps:
 
 ```txt
-App name
-User support email
-Developer contact email
+App Information       app name, user support email
+Audience              External
+Contact Information   email for Google notifications
+Finish                accept the user data policy
 ```
 
-4. Add scopes. On the current console this is **Google Auth Platform -> Data Access ->
-Add or Remove Scopes**:
+3. Add the scopes:
+
+```txt
+Data Access -> Add or remove scopes
+```
 
 ```txt
 https://www.googleapis.com/auth/drive
@@ -281,60 +280,91 @@ https://www.googleapis.com/auth/userinfo.profile
 
 Full Drive access is required so Google sign-in can connect the first Drive account automatically and sync files manually added to the `9drive` folder.
 
-5. If publishing status is `Testing`, add test users.
-
-Add every Google account that will test the app:
+4. While publishing status is `Testing`, add every Google account that will use the app:
 
 ```txt
-OAuth consent screen -> Test users -> Add users
+Audience -> Test users -> Add users
 ```
 
-If you do not add test users, Google may show:
+Without this, Google blocks sign-in:
 
 ```txt
 Access blocked: app has not completed the Google verification process
 Error 403: access_denied
 ```
 
+**Testing is only meant for development.** A project in `Testing` is issued refresh tokens
+that expire after 7 days, so every connected Drive account drops out weekly and has to be
+reconnected. Switch to production once the app works:
+
+```txt
+Audience -> Publishing status -> Publish app
+```
+
+`https://www.googleapis.com/auth/drive` is a restricted scope, so an unverified app still
+shows a warning before the consent screen:
+
+```txt
+Google hasn't verified this app
+```
+
+Click `Advanced` and continue. This appears once per account when connecting a Drive
+account, not on every sign-in. Removing it entirely requires either Google verification
+(privacy policy, public homepage, demo video, and a paid CASA security assessment) or
+dropping to the non-sensitive `drive.file` scope, which limits the app to files it created
+itself and disables syncing files placed into the `9drive` folder by hand.
+
 ### 6.4 Create OAuth Client
 
 1. Go to:
 
 ```txt
-APIs & Services -> Credentials
+Google Auth Platform -> Clients -> Create client
 ```
 
-2. Click:
+`APIs & Services -> Credentials -> Create Credentials -> OAuth client ID` opens the same
+form.
 
-```txt
-Create Credentials -> OAuth client ID
-```
-
-3. Application type:
+2. Application type:
 
 ```txt
 Web application
 ```
 
-4. Add authorized JavaScript origin:
+3. Add authorized JavaScript origin:
 
 ```txt
 http://localhost:5173
 ```
 
-5. Add authorized redirect URI:
+4. Add authorized redirect URI:
 
 ```txt
 http://localhost:4000/connected-accounts/google/callback
 ```
 
-6. Click Create.
-7. Copy:
+Deploying behind a domain and the bundled nginx proxy? The backend sits under `/api` there,
+so register that URL instead, exactly as written:
+
+```txt
+https://your-domain
+https://your-domain/api/connected-accounts/google/callback
+```
+
+One redirect URI is enough for both flows. Signing in with Google and connecting an extra
+Drive account are told apart by the OAuth state, not by the callback path.
+
+5. Click Create.
+6. Copy:
 
 ```txt
 Client ID
 Client Secret
 ```
+
+Keep the Client Secret out of a password manager's reach when pasting it into the app's
+Settings page later. A manager that autofills the field will silently replace working
+credentials, and Google then rejects the token exchange with `invalid_client`.
 
 ### 6.5 Seed Google OAuth Config
 
@@ -709,7 +739,8 @@ file
 
 - Replace localhost redirect URIs with production URLs.
 - Add production domain to Google OAuth authorized origins.
-- Set OAuth consent screen to production when ready.
+- Publish the app when ready (`Google Auth Platform -> Audience -> Publish app`). Leaving it
+  in `Testing` expires refresh tokens every 7 days.
 - Google may require verification for public apps.
 - Use strong secrets.
 - Put the backend behind HTTPS.
