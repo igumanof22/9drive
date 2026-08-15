@@ -96,7 +96,6 @@ export function AllFilesPage() {
   const [shareUrl, setShareUrl] = useState('')
   const [copiedShareLink, setCopiedShareLink] = useState(false)
   const [copiedDriveLink, setCopiedDriveLink] = useState(false)
-  const [revokingShare, setRevokingShare] = useState(false)
   const [regeneratingShare, setRegeneratingShare] = useState(false)
   const [previewUrl, setPreviewUrl] = useState('')
   const [previewError, setPreviewError] = useState('')
@@ -609,21 +608,6 @@ export function AllFilesPage() {
     window.setTimeout(() => setCopiedShareLink(false), 1600)
   }
 
-  async function revokeShareLink() {
-    if (!activeFile?.id) return
-    setRevokingShare(true)
-    try {
-      await apiFetch(`/files/${activeFile.id}/share`, { method: 'DELETE' })
-      setShareUrl('')
-      setCopiedShareLink(false)
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Failed to revoke the link')
-      setTimeout(() => setMessage(''), 3000)
-    } finally {
-      setRevokingShare(false)
-    }
-  }
-
   async function regenerateShareLink() {
     if (!activeFile?.id) return
     setRegeneratingShare(true)
@@ -864,10 +848,9 @@ export function AllFilesPage() {
           </div>
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={() => setShareOpen(false)}>Close</Button>
-            <Button variant="danger" disabled={!shareUrl || revokingShare} onClick={revokeShareLink}>{revokingShare ? 'Revoking...' : 'Revoke link'}</Button>
             <Button disabled={!shareUrl} onClick={copyShareLink}>{copiedShareLink ? <CheckCircle className="h-4 w-4" /> : null}{copiedShareLink ? 'Copied!' : 'Copy Link'}</Button>
           </div>
-          <p className="min-h-[2.5rem] rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{copiedShareLink ? 'Share link copied to clipboard.' : shareUrl ? 'Anyone holding this link can open the file through 9Drive. The file itself stays private on Google Drive.' : 'The share link is revoked. Closing and reopening this dialog issues a new one.'}</p>
+          <p className="min-h-[2.5rem] rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{copiedShareLink ? 'Share link copied to clipboard.' : shareUrl ? 'Anyone holding this link can open the file through 9Drive. The file itself stays private on Google Drive.' : 'No active link for this file yet.'}</p>
 
           {activeFile?.accountProviderId === 'google_drive' && (
             <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid gap-3">
