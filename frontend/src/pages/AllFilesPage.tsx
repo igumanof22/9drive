@@ -868,13 +868,21 @@ export function AllFilesPage() {
                 <option value="commenter">Anyone with the link can comment</option>
                 <option value="writer">Anyone with the link can edit</option>
               </select>
-              {publicRole !== 'none' && gdrivePublicUrl ? (
-                <div className="grid gap-2">
-                  <Input value={gdrivePublicUrl} readOnly />
-                  <Button type="button" variant="outline" onClick={copyDriveLink}>{copiedDriveLink ? <CheckCircle className="h-4 w-4" /> : null}{copiedDriveLink ? 'Copied!' : 'Copy Google Drive link'}</Button>
+              {/* Rows animate between 0fr and 1fr so the dialog grows smoothly instead of
+                  snapping to a new height every time the access level changes. */}
+              <div className={`grid transition-all duration-200 ease-out ${publicRole !== 'none' && gdrivePublicUrl ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                <div className="overflow-hidden">
+                  <div className="grid gap-2 pb-1">
+                    <Input value={gdrivePublicUrl} readOnly />
+                    <Button type="button" variant="outline" onClick={copyDriveLink}>{copiedDriveLink ? <CheckCircle className="h-4 w-4" /> : null}{copiedDriveLink ? 'Copied!' : 'Copy Google Drive link'}</Button>
+                  </div>
                 </div>
-              ) : null}
-              {publicRole === 'writer' ? <p className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">Anyone with this link can change or delete the file contents.</p> : null}
+              </div>
+              <div className={`grid transition-all duration-200 ease-out ${publicRole === 'writer' ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                <div className="overflow-hidden">
+                  <p className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">Anyone with this link can change or delete the file contents.</p>
+                </div>
+              </div>
             </div>
           )}
         </div>
