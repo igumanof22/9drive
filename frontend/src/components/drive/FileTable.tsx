@@ -1,6 +1,6 @@
 import { FolderOpen, MoreVertical, Star } from 'lucide-react'
 import { type MouseEvent, useState } from 'react'
-import { AvatarStack } from '@/components/drive/AvatarStack'
+import { AccountAvatar } from '@/components/drive/AccountAvatar'
 import { FileIcon } from '@/components/drive/FileIcon'
 import type { FileItem } from '@/data/drive-data'
 import { apiFetch } from '@/lib/api'
@@ -90,7 +90,7 @@ export function FileTable({ files, mode = 'default', selectedFileIds = new Set<s
                 {mode === 'archived' ? <td className="py-2.5 text-slate-500">{file.archivedDate}</td> : null}
                 <td className="py-2.5 text-slate-500">{mode === 'archived' ? file.location : file.date}</td>
                 <td className="py-2.5 text-slate-500">{file.size}</td>
-                <td className="py-2.5 text-slate-500"><span className="flex items-center gap-2"><AvatarStack count={file.shared} />{file.access}</span></td>
+                <td className="py-2.5 text-slate-500"><span className="flex items-center gap-2"><AccountAvatar email={file.accountEmail} avatarUrl={file.accountAvatarUrl} /><span className="truncate max-w-[200px]" title={file.access}>{file.access}</span></span></td>
                 <td className="py-2.5 text-right">
                   <div className="flex items-center justify-end gap-1.5">
                     {/* Hover shortcuts */}

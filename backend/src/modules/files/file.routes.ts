@@ -5,7 +5,7 @@ import { prisma } from '../../config/prisma.js'
 import { env } from '../../config/env.js'
 import { requireAuth, type AuthRequest } from '../../middleware/auth.middleware.js'
 import { hashToken, randomToken } from '../../utils/crypto.js'
-import { getAuthedGoogleClient, syncGoogleAppFolderFiles, syncGoogleQuota } from '../google/google.service.js'
+import { ensureGoogleAppFolder, getAuthedGoogleClient, syncGoogleAppFolderFiles, syncGoogleQuota } from '../google/google.service.js'
 import { deleteS3Object, syncS3Quota, createS3Client, getS3ConfigForAccount } from '../s3/s3.service.js'
 import { streamProviderFile } from './stream-file.js'
 import { googleDownloadExportMimeTypes, normalizeHeaders, withExtension } from './stream-google-file.js'
@@ -79,7 +79,7 @@ fileRouter.get('/', async (req: AuthRequest, res, next) => {
     const files = await prisma.file.findMany({
       where,
       include: {
-        connectedAccount: { select: { id: true, email: true, provider: true } },
+        connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } },
         folder: { select: { id: true, name: true } }
       },
       orderBy: { createdAt: 'desc' }
@@ -131,7 +131,7 @@ fileRouter.get('/trash', async (req: AuthRequest, res, next) => {
         ...(query.q ? { name: { contains: query.q } } : {})
       },
       include: {
-        connectedAccount: { select: { id: true, email: true, provider: true } },
+        connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } },
         folder: { select: { id: true, name: true } }
       },
       orderBy: { deletedAt: 'desc' }
@@ -258,7 +258,7 @@ fileRouter.post('/sync-google', async (req: AuthRequest, res, next) => {
 fileRouter.get('/:id', async (req: AuthRequest, res, next) => {
   try {
     const fileId = String(req.params.id)
-    const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId: req.user!.id }, include: { connectedAccount: { select: { id: true, email: true, provider: true } }, folder: { select: { id: true, name: true } } } })
+    const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId: req.user!.id }, include: { connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } }, folder: { select: { id: true, name: true } } } })
     return res.json({ file: { ...file, sizeBytes: file.sizeBytes.toString() } })
   } catch (error) {
     return next(error)
@@ -273,8 +273,89 @@ fileRouter.patch('/:id', async (req: AuthRequest, res, next) => {
     const drive = file.provider === 's3' ? null : google.drive({ version: 'v3', auth: await getAuthedGoogleClient(file.connectedAccount) })
     if (body.folderId) await prisma.folder.findFirstOrThrow({ where: { id: body.folderId, userId: req.user!.id, deletedAt: null } })
     if (body.name && drive) await drive.files.update({ fileId: file.providerFileId, requestBody: { name: body.name } })
-    const updated = await prisma.file.update({ where: { id: file.id }, data: { ...(body.name ? { name: body.name } : {}), ...(body.folderId !== undefined ? { folderId: body.folderId } : {}) }, include: { connectedAccount: { select: { id: true, email: true, provider: true } }, folder: { select: { id: true, name: true } } } })
+    const updated = await prisma.file.update({ where: { id: file.id }, data: { ...(body.name ? { name: body.name } : {}), ...(body.folderId !== undefined ? { folderId: body.folderId } : {}) }, include: { connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } }, folder: { select: { id: true, name: true } } } })
     await createAuditLog(req.user!.id, 'UPDATE_FILE', 'file', updated.id, { name: updated.name, updates: body })
+    return res.json({ file: { ...updated, sizeBytes: updated.sizeBytes.toString() } })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+// Moves a file to another connected Google account. Drive has no cross-account move, so
+// the target account is granted read access and copies the file itself: ownership follows
+// the copy and the bytes never travel through this server.
+fileRouter.post('/:id/move-account', async (req: AuthRequest, res, next) => {
+  try {
+    const body = z.object({ targetAccountId: z.string().min(1) }).parse(req.body)
+    const fileId = String(req.params.id)
+    const file = await prisma.file.findFirstOrThrow({
+      where: { id: fileId, userId: req.user!.id, status: 'active' },
+      include: { connectedAccount: true },
+    })
+    if (file.provider !== 'google_drive') {
+      return res.status(400).json({ code: 'UNSUPPORTED_PROVIDER', message: 'Only Google Drive files can be moved between accounts.' })
+    }
+    if (file.connectedAccountId === body.targetAccountId) {
+      return res.status(400).json({ code: 'SAME_ACCOUNT', message: 'File already lives in that account.' })
+    }
+
+    const target = await prisma.connectedAccount.findFirstOrThrow({
+      where: { id: body.targetAccountId, userId: req.user!.id, provider: 'google_drive', status: 'connected' },
+    })
+
+    // Refuse before touching Drive when the target cannot hold the file.
+    await syncGoogleQuota(target.id).catch(() => undefined)
+    const targetStorage = await prisma.storageAccount.findUnique({ where: { connectedAccountId: target.id } })
+    if (targetStorage?.availableBytes !== null && targetStorage?.availableBytes !== undefined && targetStorage.availableBytes < file.sizeBytes) {
+      return res.status(409).json({ code: 'TARGET_QUOTA_EXCEEDED', message: 'Not enough free space in the destination account.' })
+    }
+
+    const sourceDrive = google.drive({ version: 'v3', auth: await getAuthedGoogleClient(file.connectedAccount) })
+    const targetDrive = google.drive({ version: 'v3', auth: await getAuthedGoogleClient(target) })
+    const targetFolderId = await ensureGoogleAppFolder(target)
+
+    let permissionId: string | null = null
+    let copyId: string | null = null
+    try {
+      const permission = await sourceDrive.permissions.create({
+        fileId: file.providerFileId,
+        requestBody: { type: 'user', role: 'reader', emailAddress: target.email },
+        sendNotificationEmail: false,
+        fields: 'id',
+      })
+      permissionId = permission.data.id ?? null
+
+      const copied = await targetDrive.files.copy({
+        fileId: file.providerFileId,
+        requestBody: { name: file.name, parents: [targetFolderId] },
+        fields: 'id',
+      })
+      copyId = copied.data.id ?? null
+      if (!copyId) throw new Error('Google did not return the copied file id.')
+
+      await sourceDrive.files.delete({ fileId: file.providerFileId })
+    } catch (error) {
+      // Leave both accounts as they were rather than duplicating the file.
+      if (copyId) await targetDrive.files.delete({ fileId: copyId }).catch(() => undefined)
+      if (permissionId) await sourceDrive.permissions.delete({ fileId: file.providerFileId, permissionId }).catch(() => undefined)
+      throw error
+    }
+
+    // The grant lived on the source file, which is gone, so there is nothing left to revoke.
+
+    // Virtual folders belong to a single account, so a moved file returns to the root.
+    const updated = await prisma.file.update({
+      where: { id: file.id },
+      data: { connectedAccountId: target.id, providerFileId: copyId, folderId: null },
+      include: { connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } }, folder: { select: { id: true, name: true } } },
+    })
+    await createAuditLog(req.user!.id, 'MOVE_FILE_ACCOUNT', 'file', updated.id, {
+      name: updated.name,
+      fromAccountId: file.connectedAccountId,
+      toAccountId: target.id,
+    })
+    await Promise.allSettled([syncGoogleQuota(file.connectedAccountId), syncGoogleQuota(target.id)])
+
     return res.json({ file: { ...updated, sizeBytes: updated.sizeBytes.toString() } })
   } catch (error) {
     return next(error)
