@@ -14,9 +14,10 @@ const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY?.trim()
 declare global {
   interface Window {
     grecaptcha?: {
-      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void; 'expired-callback': () => void }) => number
+      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void; 'expired-callback': () => void; theme?: 'light' | 'dark' }) => number
       reset: (widgetId?: number) => void
     }
+    onRecaptchaLoad?: () => void
   }
 }
 
@@ -41,16 +42,20 @@ export function RegisterPage() {
         sitekey: recaptchaSiteKey,
         callback: setCaptchaToken,
         'expired-callback': () => setCaptchaToken(''),
+        // Read once at render time: reCAPTCHA cannot restyle an existing widget.
+        theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
       })
     }
 
     if (!document.getElementById(scriptId)) {
+      // api.js only bootstraps the real reCAPTCHA bundle, so window.grecaptcha is still
+      // undefined when script.onload fires. Use the documented onload callback instead.
+      window.onRecaptchaLoad = renderCaptcha
       const script = document.createElement('script')
       script.id = scriptId
-      script.src = 'https://www.google.com/recaptcha/api.js?render=explicit'
+      script.src = 'https://www.google.com/recaptcha/api.js?render=explicit&onload=onRecaptchaLoad'
       script.async = true
       script.defer = true
-      script.onload = renderCaptcha
       document.body.appendChild(script)
     } else {
       renderCaptcha()
@@ -102,7 +107,9 @@ export function RegisterPage() {
           <label className="grid gap-2 text-sm font-semibold">Name<Input value={name} onChange={(e) => setName(e.target.value)} required /></label>
           <label className="grid gap-2 text-sm font-semibold">Email<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
           <label className="grid gap-2 text-sm font-semibold">Password<Input type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
-          {recaptchaSiteKey ? <div className="min-h-[78px] overflow-hidden rounded-xl bg-slate-50 p-2"><div ref={recaptchaRef} /></div> : null}
+          {/* The reCAPTCHA iframe has a fixed 304px width, so it needs centring rather
+              than filling the box. */}
+          {recaptchaSiteKey ? <div className="mx-auto flex w-fit min-h-[78px] items-center justify-center overflow-hidden rounded-xl bg-slate-50 p-2"><div ref={recaptchaRef} /></div> : null}
           {error ? <p className="rounded-xl bg-red-50 p-3 text-sm text-red-600">{error}</p> : null}
           <Button disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</Button>
         </form>
