@@ -121,6 +121,7 @@ export function AllFilesPage() {
   const [message, setMessage] = useState('')
   const [gdrivePublicUrl, setGdrivePublicUrl] = useState('')
   const [makingPublic, setMakingPublic] = useState(false)
+  const [publicRole, setPublicRole] = useState<'none' | 'reader' | 'commenter' | 'writer'>('none')
   const [loading, setLoading] = useState(false)
   const [syncingDrive, setSyncingDrive] = useState(false)
   const [fileViewMode, setFileViewMode] = useState<FileViewMode>(getStoredFileViewMode)
@@ -526,26 +527,27 @@ export function AllFilesPage() {
     setCopiedShareLink(false)
     setGdrivePublicUrl('')
     setMakingPublic(false)
+    setPublicRole('none')
     setShareOpen(true)
+    apiFetch<{ role: string | null; url: string | null }>(`/files/${activeFile.id}/public-permission`)
+      .then((current) => {
+        setPublicRole((current.role as 'reader' | 'commenter' | 'writer') ?? 'none')
+        setGdrivePublicUrl(current.url ?? '')
+      })
+      .catch(() => undefined)
     setContextMenu({ x: 0, y: 0, file: null })
   }
 
   async function copyShareLinkDirect() {
     if (!activeFile?.id) return
     try {
-      const data = await apiFetch<{ url: string | null }>(`/files/${activeFile.id}/view-url`)
-      if (data.url) {
-        await navigator.clipboard.writeText(data.url)
-        setMessage('Google Drive link copied to clipboard!')
-        setTimeout(() => setMessage(''), 2500)
-      } else {
-        const shareData = await apiFetch<{ url: string }>(`/files/${activeFile.id}/share`, { method: 'POST' })
-        await navigator.clipboard.writeText(shareData.url)
-        setMessage('Share link copied to clipboard!')
-        setTimeout(() => setMessage(''), 2500)
-      }
-    } catch (err: any) {
-      setMessage('Failed to copy link: ' + (err.message || err))
+      // 9Drive's own link: served by the backend, so it never changes Drive permissions.
+      const shareData = await apiFetch<{ url: string }>(`/files/${activeFile.id}/share`, { method: 'POST' })
+      await navigator.clipboard.writeText(shareData.url)
+      setMessage('Share link copied to clipboard!')
+      setTimeout(() => setMessage(''), 2500)
+    } catch {
+      setMessage('Failed to copy the link')
       setTimeout(() => setMessage(''), 2500)
     }
     setContextMenu({ x: 0, y: 0, file: null })
@@ -821,36 +823,48 @@ export function AllFilesPage() {
           {activeFile?.accountProvider === 'google_drive' && (
             <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid gap-3">
               <div>
-                <label className="text-xs font-bold text-slate-500 block mb-1">Google Drive Direct Link (Public Access)</label>
-                <p className="text-xs text-slate-500 mb-2">Configure this file to be publicly accessible on Google Drive so external tools can edit/download it.</p>
+                <label className="text-xs font-bold text-slate-500 block mb-1">Google Drive link access</label>
+                <p className="text-xs text-slate-500 mb-2">Controls what anyone holding the Google Drive link may do. Files are private until you choose otherwise.</p>
               </div>
-              {gdrivePublicUrl ? (
+              <select
+                className="h-11 rounded-xl border border-slate-200 px-3 text-sm"
+                value={publicRole}
+                disabled={makingPublic}
+                onChange={async (event) => {
+                  if (!activeFile?.id) return
+                  const next = event.target.value as 'none' | 'reader' | 'commenter' | 'writer'
+                  const previous = publicRole
+                  setPublicRole(next)
+                  setMakingPublic(true)
+                  try {
+                    if (next === 'none') {
+                      await apiFetch(`/files/${activeFile.id}/public-permission`, { method: 'DELETE' })
+                      setGdrivePublicUrl('')
+                    } else {
+                      const res = await apiFetch<{ url: string }>(`/files/${activeFile.id}/public-permission`, { method: 'POST', body: JSON.stringify({ role: next }) })
+                      setGdrivePublicUrl(res.url)
+                    }
+                  } catch (error) {
+                    setPublicRole(previous)
+                    setMessage(error instanceof Error ? error.message : 'Failed to update link access')
+                    setTimeout(() => setMessage(''), 3000)
+                  } finally {
+                    setMakingPublic(false)
+                  }
+                }}
+              >
+                <option value="none">Not shared &mdash; only your account</option>
+                <option value="reader">Anyone with the link can view</option>
+                <option value="commenter">Anyone with the link can comment</option>
+                <option value="writer">Anyone with the link can edit</option>
+              </select>
+              {publicRole !== 'none' && gdrivePublicUrl ? (
                 <div className="grid gap-2">
                   <Input value={gdrivePublicUrl} readOnly />
-                  <p className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">Google Drive public link generated and copied to clipboard!</p>
+                  <Button type="button" variant="outline" onClick={async () => { await navigator.clipboard.writeText(gdrivePublicUrl); setMessage('Google Drive link copied!'); setTimeout(() => setMessage(''), 2500) }}>Copy Google Drive link</Button>
                 </div>
-              ) : (
-                <Button
-                  variant="outline"
-                  disabled={makingPublic}
-                  onClick={async () => {
-                    if (!activeFile?.id) return
-                    setMakingPublic(true)
-                    try {
-                      const res = await apiFetch<{ url: string }>('/files/' + activeFile.id + '/public-permission', { method: 'POST' })
-                      setGdrivePublicUrl(res.url)
-                      await navigator.clipboard.writeText(res.url)
-                    } catch (err: any) {
-                      alert('Failed to update Google Drive permission: ' + (err.message || err))
-                    } finally {
-                      setMakingPublic(false)
-                    }
-                  }}
-                  className="w-full text-blue-700 bg-blue-50 border-blue-200 hover:bg-blue-100 dark:text-blue-400 dark:bg-blue-950/30 dark:border-blue-900/50"
-                >
-                  {makingPublic ? 'Making Public...' : 'Make Public & Copy GDrive Link'}
-                </Button>
-              )}
+              ) : null}
+              {publicRole === 'writer' ? <p className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">Anyone with this link can change or delete the file contents.</p> : null}
             </div>
           )}
         </div>

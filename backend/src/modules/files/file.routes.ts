@@ -382,26 +382,67 @@ fileRouter.post('/:id/share', async (req: AuthRequest, res, next) => {
   }
 })
 
-fileRouter.post('/:id/public-permission', requireAuth, async (req: AuthRequest, res, next) => {
+// Link-level access on Drive itself. Nothing here happens implicitly: a file is private
+// until this endpoint is called, and the caller states which role the link carries.
+const publicRoles = ['reader', 'commenter', 'writer'] as const
+
+async function googleDriveFileFor(userId: string, fileId: string) {
+  const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId }, include: { connectedAccount: true } })
+  if (file.provider !== 'google_drive') return { file, drive: null }
+  const auth = await getAuthedGoogleClient(file.connectedAccount)
+  return { file, drive: google.drive({ version: 'v3', auth }) }
+}
+
+async function anyonePermissionsOf(drive: any, providerFileId: string) {
+  const permissions = await drive.permissions.list({ fileId: providerFileId, fields: 'permissions(id,type,role)' })
+  return (permissions.data.permissions ?? []).filter((permission: any) => permission.type === 'anyone')
+}
+
+fileRouter.get('/:id/public-permission', async (req: AuthRequest, res, next) => {
   try {
-    const fileId = String(req.params.id)
-    const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId: req.user!.id }, include: { connectedAccount: true } })
-    if (file.provider !== 'google_drive') {
-      return res.status(400).json({ code: 'UNSUPPORTED_PROVIDER', message: 'Only Google Drive files can be made public.' })
-    }
-    const auth = await getAuthedGoogleClient(file.connectedAccount)
-    const drive = google.drive({ version: 'v3', auth })
-    await drive.permissions.create({
-      fileId: file.providerFileId,
-      requestBody: {
-        role: 'writer',
-        type: 'anyone'
-      }
-    })
+    const { file, drive } = await googleDriveFileFor(req.user!.id, String(req.params.id))
+    if (!drive) return res.json({ role: null, url: null })
+    const anyone = await anyonePermissionsOf(drive, file.providerFileId)
+    if (anyone.length === 0) return res.json({ role: null, url: null })
     const metadata = await drive.files.get({ fileId: file.providerFileId, fields: 'webViewLink,webContentLink' })
-    return res.json({ status: 'ok', url: metadata.data.webViewLink ?? metadata.data.webContentLink })
-  } catch (error: any) {
-    return res.status(500).json({ code: 'GOOGLE_API_ERROR', message: error.message || 'Failed to update Google Drive permissions.' })
+    return res.json({ role: anyone[0].role, url: metadata.data.webViewLink ?? metadata.data.webContentLink })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+fileRouter.post('/:id/public-permission', async (req: AuthRequest, res, next) => {
+  try {
+    const body = z.object({ role: z.enum(publicRoles) }).parse(req.body ?? {})
+    const { file, drive } = await googleDriveFileFor(req.user!.id, String(req.params.id))
+    if (!drive) {
+      return res.status(400).json({ code: 'UNSUPPORTED_PROVIDER', message: 'Only Google Drive files can be shared by link.' })
+    }
+    // Replace instead of stacking, so the stated role is the only one in effect.
+    for (const permission of await anyonePermissionsOf(drive, file.providerFileId)) {
+      await drive.permissions.delete({ fileId: file.providerFileId, permissionId: permission.id })
+    }
+    await drive.permissions.create({ fileId: file.providerFileId, requestBody: { role: body.role, type: 'anyone' } })
+    const metadata = await drive.files.get({ fileId: file.providerFileId, fields: 'webViewLink,webContentLink' })
+    await createAuditLog(req.user!.id, 'SET_FILE_PUBLIC_ACCESS', 'file', file.id, { name: file.name, role: body.role })
+    return res.json({ status: 'ok', role: body.role, url: metadata.data.webViewLink ?? metadata.data.webContentLink })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+fileRouter.delete('/:id/public-permission', async (req: AuthRequest, res, next) => {
+  try {
+    const { file, drive } = await googleDriveFileFor(req.user!.id, String(req.params.id))
+    if (!drive) return res.json({ status: 'ok', revoked: 0 })
+    const anyone = await anyonePermissionsOf(drive, file.providerFileId)
+    for (const permission of anyone) {
+      await drive.permissions.delete({ fileId: file.providerFileId, permissionId: permission.id })
+    }
+    await createAuditLog(req.user!.id, 'REVOKE_FILE_PUBLIC_ACCESS', 'file', file.id, { name: file.name, revoked: anyone.length })
+    return res.json({ status: 'ok', revoked: anyone.length })
+  } catch (error) {
+    return next(error)
   }
 })
 
@@ -435,19 +476,6 @@ fileRouter.get('/:id/view-url', async (req: AuthRequest, res, next) => {
     if (file.provider === 's3') return res.json({ url: null })
     const auth = await getAuthedGoogleClient(file.connectedAccount)
     const drive = google.drive({ version: 'v3', auth })
-
-    // Automatically set permission to public writer when retrieving/copying the view URL!
-    try {
-      await drive.permissions.create({
-        fileId: file.providerFileId,
-        requestBody: {
-          role: 'writer',
-          type: 'anyone'
-        }
-      })
-    } catch (err: any) {
-      console.error('Failed to make Google Drive file public during view-url retrieval:', err.message || err)
-    }
 
     const metadata = await drive.files.get({ fileId: file.providerFileId, fields: 'webViewLink,webContentLink' })
     return res.json({ url: metadata.data.webViewLink ?? metadata.data.webContentLink })
