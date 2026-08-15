@@ -26,7 +26,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        navigateFallbackDenylist: [/^\/(auth|connected-accounts|files|folders|invites|provider-configs|public|storage|uploads)(\/|$)/],
+        // /api/* covers the Docker/nginx setup, where the backend is proxied under /api.
+        // Without it the service worker answers the Google OAuth callback navigation
+        // with index.html and the request never reaches the backend.
+        navigateFallbackDenylist: [/^\/api(\/|$)/, /^\/(auth|connected-accounts|files|folders|invites|provider-configs|public|storage|uploads)(\/|$)/],
         globPatterns: ['**/*.{js,css,html,svg,ico,png,webp,woff2}'],
       },
     }),
