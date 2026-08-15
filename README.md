@@ -20,6 +20,9 @@
 - Manual sync from the Google Drive `9drive` folder back into MySQL.
 - Virtual folders.
 - File preview, download, rename, move, and delete actions.
+- Move a file to another connected Drive account without re-uploading it.
+- Per-file link sharing: a revocable 9Drive link that keeps the file private on Drive, plus
+  optional Google Drive link access as viewer, commenter, or editor. Files are private by default.
 - In-app API documentation with cURL and JavaScript upload examples.
 - Bottom-right upload progress panel.
 - Bearer token authentication.
@@ -702,12 +705,33 @@ DELETE /files/batch
 POST /files/sync-google
 POST /files/:id/share
 DELETE /files/:id/share
+POST /files/:id/move-account
+GET /files/:id/public-permission
+POST /files/:id/public-permission
+DELETE /files/:id/public-permission
 POST /files/:id/preview-token
 GET /files/:id/view-url
 GET /files/:id/download
 DELETE /files/:id
 GET /files/preview/:token
 ```
+
+Sharing works on two independent levels:
+
+```txt
+POST /files/:id/share              9Drive link, served by the backend, revocable,
+                                   leaves the file private on Google Drive
+POST /files/:id/public-permission  Google Drive link access: reader, commenter, or
+                                   writer for anyone holding the link
+```
+
+Uploaded files are private by default. Nothing grants public access unless you ask for it,
+and `npm run revoke:public-links` (add `--dry-run` first) clears grants left behind by
+older versions, which published every upload as editable by anyone with the link.
+
+`POST /files/:id/move-account` moves a file to another connected Google account. The
+destination account copies the file inside Google, so ownership and quota move with it and
+nothing is re-uploaded.
 
 Uploads:
 
