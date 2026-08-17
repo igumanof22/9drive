@@ -216,6 +216,9 @@ model File {
   checksum           String?          @db.VarChar(191)
   status             String           @default("active") @db.VarChar(32)
   publicRole         String?          @map("public_role") @db.VarChar(16)
+  sharedPeopleCount  Int              @default(0) @map("shared_people_count")
+  thumbnailUrl       String?          @map("thumbnail_url") @db.Text
+  starredAt          DateTime?        @map("starred_at")
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
   deletedAt          DateTime?        @map("deleted_at")
@@ -228,6 +231,7 @@ model File {
   @@index([userId])
   @@index([userId, status, createdAt])
   @@index([userId, status, folderId, createdAt])
+  @@index([userId, status, starredAt])
   @@index([connectedAccountId])
   @@index([folderId])
   @@index([providerFileId])

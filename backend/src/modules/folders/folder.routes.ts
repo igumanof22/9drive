@@ -21,8 +21,8 @@ const createSchema = z.object({
   parentId: z.string().nullable().optional(),
 })
 
-function serializeFolder(folder: { id: string; name: string; color: string; iconUrl?: string | null; parentId?: string | null; providerFolderId?: string | null; createdAt: Date; updatedAt: Date }) {
-  return { ...folder, providerFolderId: folder.providerFolderId ?? null, createdAt: folder.createdAt.toISOString(), updatedAt: folder.updatedAt.toISOString() }
+function serializeFolder(folder: { id: string; name: string; color: string; iconUrl?: string | null; parentId?: string | null; providerFolderId?: string | null; createdAt: Date; updatedAt: Date; connectedAccount?: { id: string; email: string; provider: string; avatarUrl: string | null } | null }) {
+  return { ...folder, providerFolderId: folder.providerFolderId ?? null, connectedAccount: folder.connectedAccount ?? null, createdAt: folder.createdAt.toISOString(), updatedAt: folder.updatedAt.toISOString() }
 }
 
 async function ensureProviderFolderIds(
@@ -82,11 +82,16 @@ async function ensureProviderFolderIds(
 
 folderRouter.get('/', async (req: AuthRequest, res, next) => {
   try {
-    const query = z.object({ parentId: z.string().nullable().optional(), all: z.string().optional() }).parse(req.query)
+    const query = z.object({ parentId: z.string().nullable().optional(), all: z.string().optional(), accountId: z.string().optional() }).parse(req.query)
     const folders = await prisma.folder.findMany({
-      where: { userId: req.user!.id, deletedAt: null, ...(query.all === '1' ? {} : { parentId: query.parentId ?? null }) },
-      select: { id: true, name: true, color: true, iconUrl: true, parentId: true, providerFolderId: true, createdAt: true, updatedAt: true },
-      orderBy: { updatedAt: 'desc' },
+      where: {
+        userId: req.user!.id,
+        deletedAt: null,
+        ...(query.all === '1' ? {} : { parentId: query.parentId ?? null }),
+        ...(query.accountId ? { connectedAccountId: query.accountId } : {}),
+      },
+      select: { id: true, name: true, color: true, iconUrl: true, parentId: true, providerFolderId: true, createdAt: true, updatedAt: true, connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } } },
+      orderBy: { name: 'asc' },
     })
     await ensureProviderFolderIds(folders, req.user!.id)
     return res.json({ folders: folders.map(serializeFolder) })

@@ -1,10 +1,9 @@
-import { google } from 'googleapis'
+import { google, type drive_v3 } from 'googleapis'
 import type { ConnectedAccount, ProviderConfig } from '@prisma/client'
 import { prisma } from '../../config/prisma.js'
 import { decryptText, encryptText } from '../../utils/crypto.js'
 
 const googleDriveFolderMimeType = 'application/vnd.google-apps.folder'
-const appFolderName = '9drive'
 
 export function createOAuthClient(config: ProviderConfig) {
   return new google.auth.OAuth2(decryptText(config.clientIdEncrypted), decryptText(config.clientSecretEncrypted), config.redirectUri)
@@ -67,26 +66,16 @@ export async function syncGoogleQuota(accountId: string) {
   })
 }
 
-function escapeDriveQueryValue(value: string) {
-  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-}
-
+// 9Drive works straight on the Drive root instead of a dedicated folder, so files already
+// in Drive show up here and uploads land where the user expects them. The real root id is
+// resolved rather than the 'root' alias: the sync compares this value against file.parents,
+// which always carries concrete ids.
 export async function ensureGoogleAppFolder(account: ConnectedAccount) {
   const auth = await getAuthedGoogleClient(account)
   const drive = google.drive({ version: 'v3', auth })
-  const queryName = escapeDriveQueryValue(appFolderName)
-  const existing = await drive.files.list({
-    q: `name = '${queryName}' and mimeType = '${googleDriveFolderMimeType}' and 'root' in parents and trashed = false`,
-    spaces: 'drive',
-    fields: 'files(id,name)',
-    pageSize: 1,
-  })
-  const folderId = existing.data.files?.[0]?.id ?? (await drive.files.create({
-    requestBody: { name: appFolderName, mimeType: googleDriveFolderMimeType, parents: ['root'] },
-    fields: 'id',
-  })).data.id
-
-  if (!folderId) throw new Error('Failed to create Google Drive app folder.')
+  const root = await drive.files.get({ fileId: 'root', fields: 'id' })
+  const folderId = root.data.id
+  if (!folderId) throw new Error('Failed to resolve the Google Drive root folder.')
   return folderId
 }
 
@@ -104,6 +93,75 @@ type DriveFileMetadata = {
   sizeBytes: bigint
   parentId: string
   publicRole: string | null
+  sharedPeopleCount: number
+  thumbnailUrl: string | null
+}
+
+async function listAllDriveFiles(drive: drive_v3.Drive, q: string, fields: string) {
+  const entries: drive_v3.Schema$File[] = []
+  let pageToken: string | undefined
+  do {
+    const response = await drive.files.list({ q, spaces: 'drive', fields: `nextPageToken,${fields}`, pageSize: 1000, pageToken })
+    entries.push(...(response.data.files ?? []))
+    pageToken = response.data.nextPageToken ?? undefined
+  } while (pageToken)
+  return entries
+}
+
+// Folders the user created straight in Google Drive are unknown to 9Drive, and a file whose
+// parent is unknown has nowhere to be listed. Mirroring the Drive tree first is what makes
+// those files visible; the pass returns the Drive-id → 9Drive-folder-id map the file pass needs.
+async function mirrorDriveFolderTree(drive: drive_v3.Drive, rootId: string, connectedAccountId: string, userId: string) {
+  const driveFolders = await listAllDriveFiles(drive, `mimeType = '${googleDriveFolderMimeType}' and trashed = false and 'me' in owners`, 'files(id,name,parents)')
+
+  const childrenByParent = new Map<string, { id: string; name: string; parentId: string }[]>()
+  for (const folder of driveFolders) {
+    if (!folder.id) continue
+    const parentId = folder.parents?.[0]
+    if (!parentId) continue
+    const siblings = childrenByParent.get(parentId) ?? []
+    siblings.push({ id: folder.id, name: folder.name ?? 'Untitled', parentId })
+    childrenByParent.set(parentId, siblings)
+  }
+
+  // Breadth-first from My Drive: it skips anything outside the root subtree and guarantees a
+  // parent is inserted before its children, so the parent mapping below is always resolvable.
+  const ordered: { id: string; name: string; parentId: string }[] = []
+  const visited = new Set<string>([rootId])
+  const queue = [rootId]
+  while (queue.length > 0) {
+    for (const child of childrenByParent.get(queue.shift()!) ?? []) {
+      if (visited.has(child.id)) continue
+      visited.add(child.id)
+      ordered.push(child)
+      queue.push(child.id)
+    }
+  }
+
+  const existingFolders = await prisma.folder.findMany({
+    where: { userId, connectedAccountId, deletedAt: null, providerFolderId: { not: null } },
+    select: { id: true, providerFolderId: true, name: true, parentId: true },
+  })
+  const existingByProviderId = new Map(existingFolders.map((folder) => [folder.providerFolderId!, folder]))
+  const localIdByProviderId = new Map(existingFolders.map((folder) => [folder.providerFolderId!, folder.id]))
+
+  for (const folder of ordered) {
+    const localParentId = folder.parentId === rootId ? null : localIdByProviderId.get(folder.parentId) ?? null
+    const existing = existingByProviderId.get(folder.id)
+    if (!existing) {
+      const created = await prisma.folder.create({
+        data: { userId, connectedAccountId, provider: 'google_drive', providerFolderId: folder.id, name: folder.name, parentId: localParentId },
+      })
+      localIdByProviderId.set(folder.id, created.id)
+      continue
+    }
+    // Colour and icon are 9Drive's own decoration, so only the fields Drive owns are refreshed.
+    if (existing.name !== folder.name || existing.parentId !== localParentId) {
+      await prisma.folder.update({ where: { id: existing.id }, data: { name: folder.name, parentId: localParentId } })
+    }
+  }
+
+  return localIdByProviderId
 }
 
 export async function syncGoogleAppFolderFiles(accountId: string, userId: string): Promise<GoogleAppFolderSyncResult> {
@@ -112,37 +170,21 @@ export async function syncGoogleAppFolderFiles(accountId: string, userId: string
   const drive = google.drive({ version: 'v3', auth })
   const appFolderId = await ensureGoogleAppFolder(account)
 
-  const userFolders = await prisma.folder.findMany({
-    where: { userId, connectedAccountId: account.id, deletedAt: null },
-    select: { id: true, providerFolderId: true }
-  })
-  const parentIds = [
-    appFolderId,
-    ...userFolders.map((f) => f.providerFolderId).filter((id): id is string => !!id)
-  ]
+  const folderIdMap = await mirrorDriveFolderTree(drive, appFolderId, account.id, userId)
 
   const driveFiles: DriveFileMetadata[] = []
-  let pageToken: string | undefined
-
-  const parentsQuery = parentIds.map((id) => `'${id}' in parents`).join(' or ')
-  const q = `(${parentsQuery}) and mimeType != '${googleDriveFolderMimeType}' and trashed = false`
-
-  do {
-    const response = await drive.files.list({
-      q,
-      spaces: 'drive',
-      fields: 'nextPageToken,files(id,name,mimeType,size,parents,permissions(type,role))',
-      pageSize: 1000,
-      pageToken,
-    })
-    for (const file of response.data.files ?? []) {
-      if (!file.id || !file.name || !file.mimeType) continue
-      const parentId = file.parents?.[0] ?? appFolderId
-      const publicRole = (file.permissions ?? []).find((permission) => permission.type === 'anyone')?.role ?? null
-      driveFiles.push({ id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: BigInt(file.size ?? 0), parentId, publicRole })
-    }
-    pageToken = response.data.nextPageToken ?? undefined
-  } while (pageToken)
+  for (const file of await listAllDriveFiles(drive, `mimeType != '${googleDriveFolderMimeType}' and trashed = false and 'me' in owners`, 'files(id,name,mimeType,size,parents,thumbnailLink,permissions(type,role))')) {
+    if (!file.id || !file.name || !file.mimeType) continue
+    const parentId = file.parents?.[0] ?? appFolderId
+    // Anything parked outside My Drive — a folder someone shared, a shortcut target — has no
+    // place in the listing, so it is left out rather than surfaced at the top level.
+    if (parentId !== appFolderId && !folderIdMap.has(parentId)) continue
+    const permissions = file.permissions ?? []
+    const publicRole = permissions.find((permission) => permission.type === 'anyone')?.role ?? null
+    // The owner is a permission too, and it is never a sign that the file was shared.
+    const sharedPeopleCount = permissions.filter((permission) => permission.type === 'user' && permission.role !== 'owner').length
+    driveFiles.push({ id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: BigInt(file.size ?? 0), parentId, publicRole, sharedPeopleCount, thumbnailUrl: file.thumbnailLink ?? null })
+  }
 
   const existingFiles = await prisma.file.findMany({ where: { userId, connectedAccountId: account.id, provider: 'google_drive' } })
   const existingByProviderId = new Map(existingFiles.map((file) => [file.providerFileId, file]))
@@ -151,24 +193,22 @@ export async function syncGoogleAppFolderFiles(accountId: string, userId: string
   let updated = 0
   let deleted = 0
 
-  const folderIdMap = new Map(userFolders.map((f) => [f.providerFolderId, f.id]))
-
   for (const driveFile of driveFiles) {
     const dbFolderId = driveFile.parentId === appFolderId ? null : (folderIdMap.get(driveFile.parentId) ?? null)
     const existing = existingByProviderId.get(driveFile.id)
     if (!existing) {
       await prisma.file.create({
-        data: { userId, connectedAccountId: account.id, provider: 'google_drive', providerFileId: driveFile.id, name: driveFile.name, mimeType: driveFile.mimeType, sizeBytes: driveFile.sizeBytes, status: 'active', folderId: dbFolderId, publicRole: driveFile.publicRole },
+        data: { userId, connectedAccountId: account.id, provider: 'google_drive', providerFileId: driveFile.id, name: driveFile.name, mimeType: driveFile.mimeType, sizeBytes: driveFile.sizeBytes, status: 'active', folderId: dbFolderId, publicRole: driveFile.publicRole, sharedPeopleCount: driveFile.sharedPeopleCount, thumbnailUrl: driveFile.thumbnailUrl },
       })
       created += 1
       continue
     }
 
-    const needsUpdate = existing.name !== driveFile.name || existing.mimeType !== driveFile.mimeType || existing.sizeBytes !== driveFile.sizeBytes || existing.status !== 'active' || existing.deletedAt !== null || existing.folderId !== dbFolderId || existing.publicRole !== driveFile.publicRole
+    const needsUpdate = existing.name !== driveFile.name || existing.mimeType !== driveFile.mimeType || existing.sizeBytes !== driveFile.sizeBytes || existing.status !== 'active' || existing.deletedAt !== null || existing.folderId !== dbFolderId || existing.publicRole !== driveFile.publicRole || existing.sharedPeopleCount !== driveFile.sharedPeopleCount || existing.thumbnailUrl !== driveFile.thumbnailUrl
     if (needsUpdate) {
       await prisma.file.update({
         where: { id: existing.id },
-        data: { name: driveFile.name, mimeType: driveFile.mimeType, sizeBytes: driveFile.sizeBytes, status: 'active', deletedAt: null, folderId: dbFolderId, publicRole: driveFile.publicRole },
+        data: { name: driveFile.name, mimeType: driveFile.mimeType, sizeBytes: driveFile.sizeBytes, status: 'active', deletedAt: null, folderId: dbFolderId, publicRole: driveFile.publicRole, sharedPeopleCount: driveFile.sharedPeopleCount, thumbnailUrl: driveFile.thumbnailUrl },
       })
       updated += 1
     }
