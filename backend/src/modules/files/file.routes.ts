@@ -359,13 +359,15 @@ fileRouter.get('/:id', async (req: AuthRequest, res, next) => {
 
 fileRouter.patch('/:id', async (req: AuthRequest, res, next) => {
   try {
-    const body = z.object({ name: z.string().min(1).max(255).optional(), folderId: z.string().nullable().optional() }).parse(req.body)
+    const body = z.object({ name: z.string().min(1).max(255).optional(), folderId: z.string().nullable().optional(), starred: z.boolean().optional() }).parse(req.body)
     const fileId = String(req.params.id)
     const file = await prisma.file.findFirstOrThrow({ where: { id: fileId, userId: req.user!.id }, include: { connectedAccount: true } })
-    const drive = file.provider === 's3' ? null : google.drive({ version: 'v3', auth: await getAuthedGoogleClient(file.connectedAccount) })
+    // Starring touches nothing on Drive, so it must not drag a Google client into the request.
+    const needsDrive = Boolean(body.name) && file.provider !== 's3'
+    const drive = needsDrive ? google.drive({ version: 'v3', auth: await getAuthedGoogleClient(file.connectedAccount) }) : null
     if (body.folderId) await prisma.folder.findFirstOrThrow({ where: { id: body.folderId, userId: req.user!.id, deletedAt: null } })
     if (body.name && drive) await drive.files.update({ fileId: file.providerFileId, requestBody: { name: body.name } })
-    const updated = await prisma.file.update({ where: { id: file.id }, data: { ...(body.name ? { name: body.name } : {}), ...(body.folderId !== undefined ? { folderId: body.folderId } : {}) }, include: { connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } }, folder: { select: { id: true, name: true } } } })
+    const updated = await prisma.file.update({ where: { id: file.id }, data: { ...(body.name ? { name: body.name } : {}), ...(body.folderId !== undefined ? { folderId: body.folderId } : {}), ...(body.starred !== undefined ? { starredAt: body.starred ? new Date() : null } : {}) }, include: { connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } }, folder: { select: { id: true, name: true } } } })
     await createAuditLog(req.user!.id, 'UPDATE_FILE', 'file', updated.id, { name: updated.name, updates: body })
     return res.json({ file: { ...updated, sizeBytes: updated.sizeBytes.toString() } })
   } catch (error) {
