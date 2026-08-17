@@ -11,6 +11,7 @@ import { streamProviderFile } from './stream-file.js'
 import { googleDownloadExportMimeTypes, normalizeHeaders, withExtension } from './stream-google-file.js'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import { Readable } from 'node:stream'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { ZipArchive } from 'archiver'
 import { createAuditLog } from '../../utils/audit.js'
 
@@ -27,6 +28,75 @@ fileRouter.get('/preview/:token', async (req, res, next) => {
     })
     if (!preview || preview.file.status !== 'active') return res.status(404).json({ code: 'PREVIEW_NOT_FOUND', message: 'Preview token not found.' })
     return streamProviderFile(preview.file, req.headers.range, res, { disposition: 'inline' })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+// Drive hands out a signed thumbnail URL that stops working after a while — every stored one
+// answers 403 sooner or later — so pointing an <img> straight at it means the grid quietly
+// decays into icons. The image is fetched here with the account's OAuth token instead.
+//
+// An <img> cannot carry an Authorization header, so the URL carries a token of its own. It is
+// derived from the JWT secret and rotates hourly, and it grants nothing but this user's
+// thumbnails: far less to lose than putting the access token in a URL that lands in logs.
+const thumbnailWindowMs = 60 * 60_000
+
+function thumbnailSignature(userId: string, window: number) {
+  return createHmac('sha256', env.JWT_ACCESS_SECRET).update(`thumb:${userId}:${window}`).digest('hex')
+}
+
+function thumbnailTokenFor(userId: string) {
+  return `${userId}.${thumbnailSignature(userId, Math.floor(Date.now() / thumbnailWindowMs))}`
+}
+
+function userIdFromThumbnailToken(token: string) {
+  const separator = token.lastIndexOf('.')
+  if (separator < 1) return null
+  const userId = token.slice(0, separator)
+  const signature = token.slice(separator + 1)
+  const current = Math.floor(Date.now() / thumbnailWindowMs)
+  // The previous window still passes, so a page left open across the hour boundary does not
+  // lose every thumbnail at once.
+  for (const window of [current, current - 1]) {
+    const expected = thumbnailSignature(userId, window)
+    if (expected.length === signature.length && timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return userId
+  }
+  return null
+}
+
+fileRouter.get('/:id/thumbnail', async (req, res, next) => {
+  try {
+    const userId = userIdFromThumbnailToken(String(req.query.t ?? ''))
+    if (!userId) return res.status(401).json({ code: 'INVALID_THUMBNAIL_TOKEN', message: 'Thumbnail token is not valid.' })
+    const file = await prisma.file.findFirst({ where: { id: String(req.params.id), userId, status: 'active' }, include: { connectedAccount: true } })
+    if (!file || file.provider !== 'google_drive') return res.status(404).end()
+
+    const auth = await getAuthedGoogleClient(file.connectedAccount)
+    const accessToken = (await auth.getAccessToken()).token
+    if (!accessToken) return res.status(404).end()
+
+    async function fetchThumbnail(link: string) {
+      return fetch(link, { headers: { Authorization: `Bearer ${accessToken}` } })
+    }
+
+    // The stored link usually still serves once it is asked for with a token; only when it
+    // does not is a fresh one worth an API call.
+    let upstream = file.thumbnailUrl ? await fetchThumbnail(file.thumbnailUrl).catch(() => null) : null
+    if (!upstream?.ok) {
+      const drive = google.drive({ version: 'v3', auth })
+      const metadata = await drive.files.get({ fileId: file.providerFileId, fields: 'thumbnailLink' })
+      const link = metadata.data.thumbnailLink
+      if (!link) return res.status(404).end()
+      if (link !== file.thumbnailUrl) await prisma.file.update({ where: { id: file.id }, data: { thumbnailUrl: link } }).catch(() => undefined)
+      upstream = await fetchThumbnail(link).catch(() => null)
+    }
+    if (!upstream?.ok || !upstream.body) return res.status(404).end()
+
+    res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'image/jpeg')
+    res.setHeader('Cache-Control', 'private, max-age=3600')
+    Readable.fromWeb(upstream.body as never).pipe(res)
+    return undefined
   } catch (error) {
     return next(error)
   }
