@@ -124,6 +124,12 @@ export function AllFilesPage() {
   const [gdrivePublicUrl, setGdrivePublicUrl] = useState('')
   const [makingPublic, setMakingPublic] = useState(false)
   const [publicRole, setPublicRole] = useState<'none' | 'reader' | 'commenter' | 'writer'>('none')
+  const [people, setPeople] = useState<DrivePerson[]>([])
+  const [personEmail, setPersonEmail] = useState('')
+  const [personRole, setPersonRole] = useState<'reader' | 'commenter' | 'writer'>('reader')
+  const [personError, setPersonError] = useState('')
+  const [sharingPerson, setSharingPerson] = useState(false)
+  const [shareTab, setShareTab] = useState<'link' | 'people'>('link')
   const [loading, setLoading] = useState(false)
   const [syncingDrive, setSyncingDrive] = useState(false)
   const [fileViewMode, setFileViewMode] = useState<FileViewMode>(getStoredFileViewMode)
@@ -531,7 +537,13 @@ export function AllFilesPage() {
     setGdrivePublicUrl('')
     setMakingPublic(false)
     setPublicRole('none')
+    setPeople([])
+    setPersonEmail('')
+    setPersonRole('reader')
+    setPersonError('')
+    setShareTab('link')
     setShareOpen(true)
+    loadPeople(activeFile.id).catch(() => undefined)
     apiFetch<{ role: string | null; url: string | null }>(`/files/${activeFile.id}/public-permission`)
       .then((current) => {
         setPublicRole((current.role as 'reader' | 'commenter' | 'writer') ?? 'none')
@@ -539,6 +551,52 @@ export function AllFilesPage() {
       })
       .catch(() => undefined)
     setContextMenu({ x: 0, y: 0, file: null })
+  }
+
+  async function loadPeople(fileId: string) {
+    const data = await apiFetch<{ people: DrivePerson[] }>(`/files/${fileId}/people`)
+    setPeople(data.people)
+  }
+
+  async function sharePerson(event: FormEvent) {
+    event.preventDefault()
+    if (!activeFile?.id || !personEmail.trim()) return
+    setSharingPerson(true)
+    setPersonError('')
+    try {
+      await apiFetch(`/files/${activeFile.id}/people`, { method: 'POST', body: JSON.stringify({ email: personEmail.trim(), role: personRole }) })
+      setPersonEmail('')
+      await loadPeople(activeFile.id)
+      await loadFiles()
+    } catch (error) {
+      setPersonError(error instanceof Error ? error.message : 'Failed to share the file')
+    } finally {
+      setSharingPerson(false)
+    }
+  }
+
+  async function changePersonRole(person: DrivePerson, role: string) {
+    if (!activeFile?.id) return
+    setPersonError('')
+    try {
+      await apiFetch(`/files/${activeFile.id}/people`, { method: 'POST', body: JSON.stringify({ email: person.email, role }) })
+      await loadPeople(activeFile.id)
+      await loadFiles()
+    } catch (error) {
+      setPersonError(error instanceof Error ? error.message : 'Failed to change the access level')
+    }
+  }
+
+  async function removePerson(person: DrivePerson) {
+    if (!activeFile?.id) return
+    setPersonError('')
+    try {
+      await apiFetch(`/files/${activeFile.id}/people/${person.id}`, { method: 'DELETE' })
+      await loadPeople(activeFile.id)
+      await loadFiles()
+    } catch (error) {
+      setPersonError(error instanceof Error ? error.message : 'Failed to remove access')
+    }
   }
 
   async function copyShareLinkDirect() {
@@ -733,6 +791,7 @@ export function AllFilesPage() {
     }
     return path
   })()
+  const sharedPeopleCount = people.filter((person) => !person.isOwner).length
   const allVisibleSelected = files.length > 0 && files.every((file) => file.id && selectedFileIds.has(file.id))
   const activePreviewKind = getPreviewKind(activeFile?.mimeType)
 
@@ -834,8 +893,62 @@ export function AllFilesPage() {
       </DummyModal>
 
       <DummyModal open={deleteOpen} title={selectedFileIds.size > 0 ? 'Delete Files' : 'Delete File'} description={selectedFileIds.size > 0 ? `Delete ${selectedFileIds.size} files from Google Drive?` : `Delete ${activeFile?.name ?? 'file'} from Google Drive?`} onClose={() => setDeleteOpen(false)}><div className="flex justify-end gap-3"><Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button variant="danger" onClick={deleteFile}>Delete</Button></div></DummyModal>
-      <DummyModal open={shareOpen} title="Share Link" description={activeFile?.name ?? ''} onClose={() => setShareOpen(false)}>
-        <div className="grid gap-4">
+      <DummyModal open={shareOpen} title="Share" description={activeFile?.name ?? ''} onClose={() => setShareOpen(false)}>
+        {activeFile?.accountProviderId === 'google_drive' ? (
+          <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-900/60">
+            <button type="button" onClick={() => setShareTab('link')} className={shareTab === 'link' ? 'rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-950 shadow-sm dark:bg-slate-800' : 'rounded-lg px-3 py-2 text-sm font-semibold text-slate-500'}>Link</button>
+            <button type="button" onClick={() => setShareTab('people')} className={shareTab === 'people' ? 'rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-950 shadow-sm dark:bg-slate-800' : 'rounded-lg px-3 py-2 text-sm font-semibold text-slate-500'}>
+              People{sharedPeopleCount > 0 ? ` (${sharedPeopleCount})` : ''}
+            </button>
+          </div>
+        ) : null}
+
+        {/* One fixed height for both tabs: the dialog must not jump when the tab changes or
+            when a long list of people arrives — that list scrolls inside instead. */}
+        <div className="h-[26rem]">
+          {shareTab === 'people' && activeFile?.accountProviderId === 'google_drive' ? (
+            <div className="flex h-full flex-col gap-3">
+              <div className="shrink-0">
+                <p className="text-xs text-slate-500">Grants a specific Google account access to this file. Google sends them the notification and handles the access itself.</p>
+              </div>
+              <form onSubmit={sharePerson} className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                <Input type="email" value={personEmail} onChange={(event) => setPersonEmail(event.target.value)} placeholder="person@gmail.com" autoComplete="off" className="flex-1" />
+                <select className="h-11 rounded-xl border border-slate-200 px-3 text-sm sm:w-36" value={personRole} onChange={(event) => setPersonRole(event.target.value as 'reader' | 'commenter' | 'writer')}>
+                  <option value="reader">Can view</option>
+                  <option value="commenter">Can comment</option>
+                  <option value="writer">Can edit</option>
+                </select>
+                <Button type="submit" disabled={sharingPerson || !personEmail.trim()}>{sharingPerson ? 'Sharing...' : 'Share'}</Button>
+              </form>
+              {personError ? <p className="shrink-0 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{personError}</p> : null}
+              <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto pr-1">
+                {people.length === 0 ? (
+                  <p className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500">Only the owning Drive account has access.</p>
+                ) : people.map((person) => (
+                  <div key={person.id} className="flex items-center gap-2 rounded-xl bg-slate-50 p-2.5">
+                    <AccountAvatar email={person.email} avatarUrl={person.photoUrl ?? undefined} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-bold text-slate-900 dark:text-slate-100" title={person.email}>{person.name || person.email}</p>
+                      {person.name ? <p className="truncate text-[11px] text-slate-500">{person.email}</p> : null}
+                    </div>
+                    {person.isOwner ? (
+                      <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-500">Owner</span>
+                    ) : (
+                      <>
+                        <select className="h-9 shrink-0 rounded-lg border border-slate-200 px-2 text-xs" value={person.role} onChange={(event) => changePersonRole(person, event.target.value)}>
+                          <option value="reader">Can view</option>
+                          <option value="commenter">Can comment</option>
+                          <option value="writer">Can edit</option>
+                        </select>
+                        <button type="button" onClick={() => removePerson(person)} className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" aria-label={`Remove ${person.email}`}><X className="h-4 w-4" /></button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+        <div className="grid h-full content-start gap-4 overflow-y-auto pr-1">
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
               <label className="text-xs font-bold text-slate-500">9Drive Public Share Link (No GDrive login required)</label>
