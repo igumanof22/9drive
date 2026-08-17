@@ -6,8 +6,18 @@ import {
   Trash2,
   RefreshCw,
   Folder,
+  FolderMinus,
+  FolderPlus,
   FileText,
   Download,
+  Globe,
+  HardDriveDownload,
+  Lock,
+  Pencil,
+  RotateCcw,
+  Upload,
+  UserMinus,
+  UserPlus,
   AlertTriangle,
   Move
 } from 'lucide-react'
@@ -15,6 +25,34 @@ import { Card } from '@/components/ui/card'
 import { PageHeader } from '@/components/drive/PageHeader'
 import { apiFetch, formatDate } from '@/lib/api'
 import { cn } from '@/lib/utils'
+
+const tones = {
+  emerald: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
+  rose: 'bg-rose-500/10 text-rose-600 border-rose-500/20',
+  amber: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+  indigo: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20',
+  blue: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
+  slate: 'bg-slate-500/10 text-slate-600 border-slate-500/20',
+}
+
+// Every action the backend writes, named and marked deliberately. Guessing from substrings
+// alone put a plain clock next to sharing and publishing — the entries that matter most.
+const actionBadges: Record<string, { bg: string; icon: React.ElementType; label: string }> = {
+  UPLOAD_FILE: { bg: tones.emerald, icon: Upload, label: 'Uploaded file' },
+  CREATE_FOLDER: { bg: tones.emerald, icon: FolderPlus, label: 'Created folder' },
+  UPDATE_FILE: { bg: tones.slate, icon: Pencil, label: 'Updated file' },
+  UPDATE_FOLDER: { bg: tones.slate, icon: Pencil, label: 'Updated folder' },
+  MOVE_FILES: { bg: tones.indigo, icon: Move, label: 'Moved files' },
+  MOVE_FILE_ACCOUNT: { bg: tones.indigo, icon: HardDriveDownload, label: 'Moved file to another account' },
+  TRASH_FILE: { bg: tones.rose, icon: Trash2, label: 'Moved file to trash' },
+  PERMANENT_DELETE_FILE: { bg: tones.rose, icon: Trash2, label: 'Deleted file permanently' },
+  DELETE_FOLDER: { bg: tones.rose, icon: FolderMinus, label: 'Deleted folder' },
+  RESTORE_FILE: { bg: tones.amber, icon: RotateCcw, label: 'Restored file' },
+  SET_FILE_PUBLIC_ACCESS: { bg: tones.amber, icon: Globe, label: 'Made file public by link' },
+  REVOKE_FILE_PUBLIC_ACCESS: { bg: tones.emerald, icon: Lock, label: 'Made file private again' },
+  SHARE_FILE_WITH_PERSON: { bg: tones.blue, icon: UserPlus, label: 'Shared file with a person' },
+  UNSHARE_FILE_WITH_PERSON: { bg: tones.slate, icon: UserMinus, label: 'Removed a person from a file' },
+}
 
 type AuditLog = {
   id: string
@@ -48,47 +86,23 @@ export function ActivityLogPage() {
   }, [])
 
   function getActionBadge(action: string) {
+    const known = actionBadges[action.toUpperCase()]
+    if (known) return { ...known, label: known.label }
+
+    // Anything not listed above still gets a sensible mark. Order matters: UNSHARE contains
+    // SHARE, and PERMANENT_DELETE contains DELETE, so the narrower test has to come first.
     const act = action.toUpperCase()
-    if (act.includes('CREATE') || act.includes('UPLOAD')) {
-      return {
-        bg: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
-        icon: Plus,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('DELETE') || act.includes('PERMANENT') || act.includes('TRASH')) {
-      return {
-        bg: 'bg-rose-500/10 text-rose-600 border-rose-500/20',
-        icon: Trash2,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('RESTORE') || act.includes('SYNC')) {
-      return {
-        bg: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-        icon: RefreshCw,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('MOVE')) {
-      return {
-        bg: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20',
-        icon: Move,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('DOWNLOAD')) {
-      return {
-        bg: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
-        icon: Download,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    return {
-      bg: 'bg-slate-500/10 text-slate-600 border-slate-500/20',
-      icon: History,
-      label: action.replace(/_/g, ' ')
-    }
+    const label = action.replace(/_/g, ' ')
+    if (act.includes('UNSHARE') || act.includes('REVOKE')) return { bg: tones.slate, icon: UserMinus, label }
+    if (act.includes('SHARE')) return { bg: tones.blue, icon: UserPlus, label }
+    if (act.includes('PUBLIC')) return { bg: tones.amber, icon: Globe, label }
+    if (act.includes('CREATE') || act.includes('UPLOAD')) return { bg: tones.emerald, icon: Plus, label }
+    if (act.includes('DELETE') || act.includes('PERMANENT') || act.includes('TRASH')) return { bg: tones.rose, icon: Trash2, label }
+    if (act.includes('RESTORE') || act.includes('SYNC')) return { bg: tones.amber, icon: RefreshCw, label }
+    if (act.includes('MOVE')) return { bg: tones.indigo, icon: Move, label }
+    if (act.includes('DOWNLOAD')) return { bg: tones.blue, icon: Download, label }
+    if (act.includes('UPDATE') || act.includes('RENAME')) return { bg: tones.slate, icon: Pencil, label }
+    return { bg: tones.slate, icon: History, label }
   }
 
   function renderMetadata(metadata: any) {
