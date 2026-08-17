@@ -33,11 +33,11 @@ import { clearAuthSession, getStoredUser, updateStoredUser, type AuthUser } from
 import { getGravatarUrl } from '@/lib/gravatar'
 import { cn } from '@/lib/utils'
 
-const menu = [
+const menu: { label: string; icon: typeof FileArchive; href: string; disabled?: boolean }[] = [
   { label: 'All Files', icon: FileArchive, href: '/all-files' },
   { label: 'Quota Tracker', icon: Gauge, href: '/quota' },
   { label: 'Shared With Me', icon: Share2, href: '/shared' },
-  { label: 'Starred', icon: Star, href: '/starred', disabled: true },
+  { label: 'Starred', icon: Star, href: '/starred' },
   { label: 'Recycle Bin', icon: Trash2, href: '/trash' },
   { label: 'Activity Log', icon: History, href: '/activity' },
   { label: 'Setting', icon: Settings, href: '/settings' },
@@ -89,7 +89,7 @@ function SystemInfoDropdown({ storage, isAdmin }: { storage: any; isAdmin: boole
             {/* Backend internals stay with the administrator. */}
             {isAdmin ? <>
               <p>• <b>DB Type:</b> MySQL (Docker)</p>
-              <p>• <b>Upload Folder:</b> Google Drive dedicated <code>9drive</code></p>
+              <p>• <b>Upload Folder:</b> Google Drive root (<code>My Drive</code>)</p>
             </> : null}
             <p>• <b>Max Upload Size:</b> 5 GB per stream</p>
           </div>

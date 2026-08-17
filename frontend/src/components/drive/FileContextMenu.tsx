@@ -1,5 +1,6 @@
-import { Copy, Download, Edit3, Eye, FolderInput, HardDriveDownload, Info, Link2, Trash2, UserPlus } from 'lucide-react'
+import { Copy, Download, Edit3, Eye, FolderInput, HardDriveDownload, Info, Link2, Star, StarOff, Trash2, UserPlus } from 'lucide-react'
 import type { FileItem } from '@/data/drive-data'
+import { useAnchoredMenu } from '@/lib/menu-position'
 
 type Props = {
   x: number
@@ -15,6 +16,7 @@ type Props = {
   onShare: () => void
   onCopyLink: () => void
   onInvite: () => void
+  onToggleStar: () => void
   onDelete: () => void
 }
 
@@ -62,11 +64,10 @@ function MenuItem({ icon: Icon, label, onClick, danger = false, kbd }: { icon: R
   )
 }
 
-export function FileContextMenu({ x, y, file, onClose, onView, onDownload, onRename, onMove, onMoveAccount, onDetails, onShare, onCopyLink, onInvite, onDelete }: Props) {
+export function FileContextMenu({ x, y, file, onClose, onView, onDownload, onRename, onMove, onMoveAccount, onDetails, onShare, onCopyLink, onInvite, onToggleStar, onDelete }: Props) {
+  const { ref, style } = useAnchoredMenu(x, y)
   if (!file) return null
 
-  const safeX = Math.max(12, Math.min(x, window.innerWidth - 228))
-  const safeY = Math.max(12, Math.min(y, window.innerHeight - 430))
   const kindColor = kindColors[file.kind] ?? 'bg-slate-500'
   const kindLabel = kindLabels[file.kind] ?? 'File'
 
@@ -86,12 +87,9 @@ export function FileContextMenu({ x, y, file, onClose, onView, onDownload, onRen
         onClick={onClose}
       />
       <div
-        className="fixed z-50 w-56 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/95 shadow-2xl shadow-slate-950/15 backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-900/95"
-        style={
-          window.innerWidth >= 640
-            ? { left: safeX, top: safeY }
-            : { insetInline: '0.75rem', bottom: '0.75rem', position: 'fixed' }
-        }
+        ref={ref}
+        className="fixed z-50 max-h-[calc(100dvh-1.5rem)] w-56 overflow-y-auto rounded-2xl border border-slate-200/70 bg-white/95 shadow-2xl shadow-slate-950/15 backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-900/95"
+        style={style}
       >
         {/* Header: file name + kind badge + folder path */}
         <div className="border-b border-slate-100 bg-slate-50/80 px-3.5 py-3 dark:border-slate-800 dark:bg-slate-800/50">
@@ -128,6 +126,7 @@ export function FileContextMenu({ x, y, file, onClose, onView, onDownload, onRen
           <MenuItem icon={Edit3} label="Rename" onClick={onRename} />
           <MenuItem icon={FolderInput} label="Move to Folder" onClick={onMove} />
           <MenuItem icon={HardDriveDownload} label="Move to Another Account" onClick={onMoveAccount} />
+          <MenuItem icon={file.starred ? StarOff : Star} label={file.starred ? 'Remove from Starred' : 'Add to Starred'} onClick={onToggleStar} />
           <MenuItem icon={Info} label="Details" onClick={onDetails} />
 
           <div className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
