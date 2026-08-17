@@ -542,6 +542,97 @@ fileRouter.delete('/:id/public-permission', async (req: AuthRequest, res, next) 
   }
 })
 
+// Per-person access, handled entirely by Drive. 9Drive keeps no permission table of its own:
+// a second list would drift from Google's and there is no way to tell which one is right.
+// The listing badge reads this count, so every path that changes Drive permissions has to
+// refresh it; otherwise a file keeps looking shared after access was taken away.
+async function syncSharedPeopleCount(drive: any, providerFileId: string, fileId: string) {
+  const permissions = await drive.permissions.list({ fileId: providerFileId, fields: 'permissions(id,type,role)' })
+  const count = (permissions.data.permissions ?? []).filter((permission: any) => permission.type === 'user' && permission.role !== 'owner').length
+  await prisma.file.update({ where: { id: fileId }, data: { sharedPeopleCount: count } })
+  return count
+}
+
+fileRouter.get('/:id/people', async (req: AuthRequest, res, next) => {
+  try {
+    const { file, drive } = await googleDriveFileFor(req.user!.id, String(req.params.id))
+    if (!drive) return res.json({ people: [] })
+    const permissions = await drive.permissions.list({ fileId: file.providerFileId, fields: 'permissions(id,type,role,emailAddress,displayName,photoLink,deleted)' })
+    const shared = (permissions.data.permissions ?? []).filter((permission) => permission.type === 'user' && permission.role !== 'owner').length
+    if (shared !== file.sharedPeopleCount) await prisma.file.update({ where: { id: file.id }, data: { sharedPeopleCount: shared } })
+    const people = (permissions.data.permissions ?? [])
+      .filter((permission) => permission.type === 'user')
+      .map((permission) => ({
+        id: permission.id,
+        email: permission.emailAddress ?? '',
+        name: permission.displayName ?? null,
+        photoUrl: permission.photoLink ?? null,
+        role: permission.role,
+        // The owner is listed so it is obvious whose Drive holds the file, but it cannot be
+        // removed through this endpoint.
+        isOwner: permission.role === 'owner',
+      }))
+    return res.json({ people })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+fileRouter.post('/:id/people', async (req: AuthRequest, res, next) => {
+  try {
+    const body = z.object({ email: z.string().email(), role: z.enum(publicRoles), notify: z.boolean().optional() }).parse(req.body ?? {})
+    const { file, drive } = await googleDriveFileFor(req.user!.id, String(req.params.id))
+    if (!drive) {
+      return res.status(400).json({ code: 'UNSUPPORTED_PROVIDER', message: 'Only Google Drive files can be shared with people.' })
+    }
+    const email = body.email.trim().toLowerCase()
+    if (email === file.connectedAccount.email?.trim().toLowerCase()) {
+      return res.status(400).json({ code: 'ALREADY_OWNER', message: 'That account already owns this file.' })
+    }
+
+    // Drive stacks a second permission for the same person instead of replacing the first,
+    // which leaves two roles in play, so an existing one is updated rather than re-created.
+    const existing = await drive.permissions.list({ fileId: file.providerFileId, fields: 'permissions(id,type,role,emailAddress)' })
+    const current = (existing.data.permissions ?? []).find((permission) => permission.type === 'user' && permission.emailAddress?.toLowerCase() === email)
+    if (current?.id) {
+      if (current.role === 'owner') {
+        return res.status(400).json({ code: 'ALREADY_OWNER', message: 'That account already owns this file.' })
+      }
+      await drive.permissions.update({ fileId: file.providerFileId, permissionId: current.id, requestBody: { role: body.role } })
+    } else {
+      await drive.permissions.create({
+        fileId: file.providerFileId,
+        requestBody: { type: 'user', role: body.role, emailAddress: email },
+        sendNotificationEmail: body.notify ?? true,
+      })
+    }
+
+    await syncSharedPeopleCount(drive, file.providerFileId, file.id)
+    await createAuditLog(req.user!.id, 'SHARE_FILE_WITH_PERSON', 'file', file.id, { name: file.name, email, role: body.role })
+    return res.json({ status: 'ok' })
+  } catch (error) {
+    return next(error)
+  }
+})
+
+fileRouter.delete('/:id/people/:permissionId', async (req: AuthRequest, res, next) => {
+  try {
+    const { file, drive } = await googleDriveFileFor(req.user!.id, String(req.params.id))
+    if (!drive) return res.json({ status: 'ok' })
+    const permissionId = String(req.params.permissionId)
+    const permission = await drive.permissions.get({ fileId: file.providerFileId, permissionId, fields: 'id,type,role,emailAddress' })
+    if (permission.data.role === 'owner') {
+      return res.status(400).json({ code: 'CANNOT_REMOVE_OWNER', message: 'The owner cannot be removed from the file.' })
+    }
+    await drive.permissions.delete({ fileId: file.providerFileId, permissionId })
+    await syncSharedPeopleCount(drive, file.providerFileId, file.id)
+    await createAuditLog(req.user!.id, 'UNSHARE_FILE_WITH_PERSON', 'file', file.id, { name: file.name, email: permission.data.emailAddress })
+    return res.json({ status: 'ok' })
+  } catch (error) {
+    return next(error)
+  }
+})
+
 fileRouter.delete('/:id/share', async (req: AuthRequest, res, next) => {
   try {
     const fileId = String(req.params.id)
