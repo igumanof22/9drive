@@ -190,6 +190,12 @@ section.bg-white:not(button):not(.popover-surface) {
 /* Hover effects for background classes */
 /* Colour comes from the theme token; dimming the whole element also dimmed its text,
    which read as a hover state that did not belong to the theme. */
+/* slate-50 was left out of this mapping, so in dark mode it stayed Tailwind's near-white and
+   painted a pale block under pale text: the hovered row became the one row you could not read. */
+.hover\:bg-slate-50:hover,
+.hover\:bg-slate-50\/50:hover {
+  background-color: var(--slate-50-override) !important;
+}
 .hover\:bg-slate-100:hover {
   background-color: var(--slate-100-override) !important;
 }
