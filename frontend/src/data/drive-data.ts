@@ -2,16 +2,21 @@ export type FolderItem = {
   id?: string
   name: string
   updated: string
+  updatedAt?: string
   color: string
   iconUrl?: string | null
   parentId?: string | null
   providerFolderId?: string | null
+  accountEmail?: string
+  accountAvatarUrl?: string
 }
 
 export type FileItem = {
   id?: string
   name: string
   mimeType?: string
+  providerFileId?: string
+  thumbnailUrl?: string | null
   date: string
   size: string
   sizeBytes?: string
@@ -20,6 +25,7 @@ export type FileItem = {
   accountAvatarUrl?: string
   accountProviderId?: string
   publicRole?: 'reader' | 'commenter' | 'writer' | null
+  sharedPeopleCount?: number
   accountProvider?: string
   createdAt?: string
   kind: 'doc' | 'image' | 'video' | 'pdf'
@@ -27,6 +33,7 @@ export type FileItem = {
   owner?: string
   location?: string
   archivedDate?: string
+  starred?: boolean
   starredDate?: string
   openedDate?: string
   folderId?: string | null
