@@ -1,4 +1,5 @@
 import { ClipboardPaste, FolderPlus, Upload } from 'lucide-react'
+import { useAnchoredMenu } from '@/lib/menu-position'
 
 type Props = {
   x: number
@@ -37,9 +38,8 @@ function MenuItem({ icon: Icon, label, onClick, accent = false }: { icon: React.
 }
 
 export function EmptyAreaContextMenu({ x, y, open, canPasteFolder = false, onClose, onUpload, onCreateFolder, onPasteFolder }: Props) {
+  const { ref, style } = useAnchoredMenu(x, y)
   if (!open) return null
-  const safeX = Math.max(12, Math.min(x, window.innerWidth - 228))
-  const safeY = Math.max(12, Math.min(y, window.innerHeight - 160))
 
   return (
     <>
@@ -49,12 +49,9 @@ export function EmptyAreaContextMenu({ x, y, open, canPasteFolder = false, onClo
         onClick={onClose}
       />
       <div
-        className="fixed z-50 w-52 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/95 shadow-2xl shadow-slate-950/15 backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-900/95"
-        style={
-          window.innerWidth >= 640
-            ? { left: safeX, top: safeY }
-            : { insetInline: '0.75rem', bottom: '0.75rem', position: 'fixed' }
-        }
+        ref={ref}
+        className="fixed z-50 max-h-[calc(100dvh-1.5rem)] w-52 overflow-y-auto rounded-2xl border border-slate-200/70 bg-white/95 shadow-2xl shadow-slate-950/15 backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-900/95"
+        style={style}
       >
         <div className="p-1.5">
           <MenuItem icon={Upload} label="Upload File" onClick={onUpload} accent />

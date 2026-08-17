@@ -1,5 +1,6 @@
 import { Copy, Edit3, FolderOpen, Scissors, Trash2, UserPlus } from 'lucide-react'
 import type { FolderItem } from '@/data/drive-data'
+import { useAnchoredMenu } from '@/lib/menu-position'
 
 type Props = {
   x: number
@@ -44,9 +45,8 @@ function MenuItem({ icon: Icon, label, onClick, danger = false, kbd }: { icon: R
 }
 
 export function FolderContextMenu({ x, y, folder, onClose, onCut, onRename, onInvite, onCopyLink, onDelete }: Props) {
+  const { ref, style } = useAnchoredMenu(x, y)
   if (!folder) return null
-  const safeX = Math.max(12, Math.min(x, window.innerWidth - 228))
-  const safeY = Math.max(12, Math.min(y, window.innerHeight - 280))
 
   return (
     <>
@@ -56,12 +56,9 @@ export function FolderContextMenu({ x, y, folder, onClose, onCut, onRename, onIn
         onClick={onClose}
       />
       <div
-        className="fixed z-50 w-56 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/95 shadow-2xl shadow-slate-950/15 backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-900/95"
-        style={
-          window.innerWidth >= 640
-            ? { left: safeX, top: safeY }
-            : { insetInline: '0.75rem', bottom: '0.75rem', position: 'fixed' }
-        }
+        ref={ref}
+        className="fixed z-50 max-h-[calc(100dvh-1.5rem)] w-56 overflow-y-auto rounded-2xl border border-slate-200/70 bg-white/95 shadow-2xl shadow-slate-950/15 backdrop-blur-2xl dark:border-slate-800/70 dark:bg-slate-900/95"
+        style={style}
       >
         {/* Header */}
         <div className="border-b border-slate-100 bg-slate-50/80 px-3.5 py-3 dark:border-slate-800 dark:bg-slate-800/50">
