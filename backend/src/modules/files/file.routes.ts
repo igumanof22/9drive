@@ -114,7 +114,10 @@ fileRouter.get('/', async (req: AuthRequest, res, next) => {
       minSize: z.coerce.number().optional(),
       maxSize: z.coerce.number().optional(),
       startDate: z.string().datetime().optional(),
-      endDate: z.string().datetime().optional()
+      endDate: z.string().datetime().optional(),
+      starred: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+      offset: z.coerce.number().int().min(0).optional()
     }).parse(req.query)
 
     const typeFilters: Record<string, string[]> = {
@@ -125,12 +128,17 @@ fileRouter.get('/', async (req: AuthRequest, res, next) => {
       archive: ['application/zip', 'application/x-rar-compressed', 'application/x-tar', 'application/x-7z-compressed']
     }
 
+    // Browsing a level lists only what sits at that level, the way Drive does. Search and the
+    // starred view are the deliberate exceptions: both are meant to reach across every folder.
+    const browsesOneLevel = !query.folderId && !query.q && query.starred !== '1'
+
     const where: any = {
       userId: req.user!.id,
       status: 'active',
-      ...(query.folderId ? { folderId: query.folderId } : {}),
+      ...(query.folderId ? { folderId: query.folderId } : browsesOneLevel ? { folderId: null } : {}),
       ...(query.q ? { name: { contains: query.q } } : {}),
       ...(query.accountId ? { connectedAccountId: query.accountId } : {}),
+      ...(query.starred === '1' ? { starredAt: { not: null } } : {}),
       ...(query.kind ? { mimeType: { in: typeFilters[query.kind] || [] } } : {}),
       ...(query.minSize !== undefined || query.maxSize !== undefined ? {
         sizeBytes: {
@@ -146,15 +154,29 @@ fileRouter.get('/', async (req: AuthRequest, res, next) => {
       } : {})
     }
 
+    // Paginate only when a limit is asked for, so callers that need the whole set keep it.
+    // One row beyond the page is fetched purely to answer "is there more" without a count query.
+    const take = query.limit
     const files = await prisma.file.findMany({
       where,
       include: {
         connectedAccount: { select: { id: true, email: true, provider: true, avatarUrl: true } },
         folder: { select: { id: true, name: true } }
       },
-      orderBy: { createdAt: 'desc' }
+      // Name alone is not a stable order once two files share it, and an unstable order makes
+      // a paged read skip or repeat rows.
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      ...(take ? { skip: query.offset ?? 0, take: take + 1 } : {})
     })
-    return res.json({ files: files.map((file) => ({ ...file, sizeBytes: file.sizeBytes.toString() })) })
+    const hasMore = take ? files.length > take : false
+    const page = hasMore ? files.slice(0, take) : files
+    // The signed Drive URL stays on the server; the client only learns whether a thumbnail
+    // exists and asks this API for the image.
+    return res.json({
+      files: page.map((file) => ({ ...file, thumbnailUrl: undefined, hasThumbnail: Boolean(file.thumbnailUrl), sizeBytes: file.sizeBytes.toString() })),
+      thumbnailToken: thumbnailTokenFor(req.user!.id),
+      hasMore,
+    })
   } catch (error) {
     return next(error)
   }
