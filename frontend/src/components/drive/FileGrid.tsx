@@ -1,78 +1,22 @@
 import { MoreVertical } from 'lucide-react'
+import { AccountAvatar } from '@/components/drive/AccountAvatar'
 import { PublicBadge } from '@/components/drive/PublicBadge'
-import type { MouseEvent } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { Card } from '@/components/ui/card'
 import { FileIcon } from '@/components/drive/FileIcon'
 import type { FileItem } from '@/data/drive-data'
 import { cn } from '@/lib/utils'
+import { getFileType } from '@/lib/file-type'
 
 export type FileSizeScale = 'xs' | 'sm' | 'md' | 'lg'
 
-const scaleConfig: Record<FileSizeScale, {
-  grid: string
-  card: string
-  checkbox: string
-  menuBtn: string
-  iconShell: string
-  icon: string
-  title: string
-  date: string
-  tagsShell: string
-  tag: string
-  mtCard: string
-}> = {
-  xs: {
-    grid: 'grid-cols-3 sm:grid-cols-4 xl:grid-cols-6 gap-2',
-    card: 'p-2.5',
-    checkbox: 'h-4 w-4',
-    menuBtn: '-mr-2.5 -mt-2.5 h-7 w-7',
-    iconShell: 'h-10 w-10 mt-1',
-    icon: 'h-5 w-5 p-1',
-    title: 'text-[11px] min-h-7 mt-2',
-    date: 'text-[9px] mt-0.5',
-    tagsShell: 'mt-1.5 gap-1',
-    tag: 'px-1.5 py-0.5 text-[9px]',
-    mtCard: 'mt-2',
-  },
-  sm: {
-    grid: 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2.5',
-    card: 'p-3',
-    checkbox: 'h-4.5 w-4.5',
-    menuBtn: '-mr-2 -mt-2 h-8 w-8',
-    iconShell: 'h-12 w-12 mt-2',
-    icon: 'h-7 w-7 p-1.5',
-    title: 'text-xs min-h-8 mt-3',
-    date: 'text-[10px] mt-1',
-    tagsShell: 'mt-2 gap-1.5',
-    tag: 'px-2 py-0.5 text-[10px]',
-    mtCard: 'mt-3',
-  },
-  md: {
-    grid: 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5',
-    card: 'p-4',
-    checkbox: 'h-5 w-5',
-    menuBtn: '-mr-2 -mt-2 h-10 w-10',
-    iconShell: 'h-16 w-16 sm:h-20 sm:w-20 mt-4',
-    icon: 'h-9 w-9 rounded-xl p-2 sm:h-11 sm:w-11',
-    title: 'line-clamp-2 min-h-10 text-sm font-extrabold text-slate-950 mt-5',
-    date: 'mt-2 truncate text-xs text-slate-500',
-    tagsShell: 'mt-3 flex flex-wrap justify-center gap-2 text-xs font-semibold text-slate-600',
-    tag: 'rounded-full bg-slate-100 px-2.5 py-1',
-    mtCard: 'mt-5',
-  },
-  lg: {
-    grid: 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6',
-    card: 'p-6',
-    checkbox: 'h-6 w-6',
-    menuBtn: '-mr-3 -mt-3 h-12 w-12',
-    iconShell: 'h-24 w-24 sm:h-32 sm:w-32 mt-6',
-    icon: 'h-14 w-14 rounded-2xl p-3 sm:h-18 sm:w-18',
-    title: 'line-clamp-2 min-h-12 text-base font-extrabold text-slate-950 mt-6 sm:text-lg',
-    date: 'mt-2 truncate text-sm text-slate-500',
-    tagsShell: 'mt-4 flex flex-wrap justify-center gap-2 text-sm font-semibold text-slate-600',
-    tag: 'rounded-full bg-slate-100 px-3 py-1.5',
-    mtCard: 'mt-6',
-  },
+// The scale picker sets how many tiles fit across, which is what decides thumbnail size.
+// md is the 8-column default; the others step around it.
+const scaleConfig: Record<FileSizeScale, { grid: string; title: string; meta: string; showMeta: boolean; showAccount: boolean; icon: string }> = {
+  xs: { grid: 'grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8 xl:grid-cols-12', title: 'text-[10px]', meta: 'text-[9px]', showMeta: false, showAccount: false, icon: 'h-7 w-7 rounded-lg p-1.5' },
+  sm: { grid: 'grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6 xl:grid-cols-10', title: 'text-[11px]', meta: 'text-[9px]', showMeta: true, showAccount: false, icon: 'h-8 w-8 rounded-lg p-2' },
+  md: { grid: 'grid-cols-3 gap-2.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8', title: 'text-xs', meta: 'text-[10px]', showMeta: true, showAccount: true, icon: 'h-10 w-10 rounded-xl p-2.5' },
+  lg: { grid: 'grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5', title: 'text-[13px]', meta: 'text-[11px]', showMeta: true, showAccount: true, icon: 'h-14 w-14 rounded-2xl p-3' },
 }
 
 export function FileGrid({
@@ -80,52 +24,89 @@ export function FileGrid({
   selectedFileIds = new Set<string>(),
   sizeScale = 'md',
   onFileContextMenu,
-  onToggleFile
+  onToggleFile,
+  onFileOpen
 }: {
   files: FileItem[]
   selectedFileIds?: Set<string>
   sizeScale?: FileSizeScale
   onFileContextMenu?: (event: MouseEvent<HTMLElement>, file: FileItem) => void
   onToggleFile?: (file: FileItem) => void
+  onFileOpen?: (file: FileItem) => void
 }) {
   const cfg = scaleConfig[sizeScale]
+  // Drive's thumbnail URLs are signed and expire, so a stale one has to fall back to the icon
+  // instead of leaving a broken image in the tile.
+  const [brokenThumbnails, setBrokenThumbnails] = useState<Set<string>>(new Set())
+
   return (
-    <div className={cn("mt-5 grid", cfg.grid)}>
+    <div className={cn('mt-5 grid', cfg.grid)}>
       {files.map((file) => {
         const selected = selectedFileIds.has(file.id ?? '')
+        const type = getFileType(file)
+        const thumbnail = file.thumbnailUrl && !brokenThumbnails.has(file.id ?? '') ? file.thumbnailUrl : null
         return (
           <Card
             key={file.id ?? file.name}
             draggable
             onDragStart={(event) => { event.dataTransfer.setData('text/plain', file.id ?? ''); event.dataTransfer.effectAllowed = 'move' }}
             onClick={() => onToggleFile?.(file)}
+            onDoubleClick={() => onFileOpen?.(file)}
             onContextMenu={(event) => onFileContextMenu?.(event, file)}
             className={cn(
-              selected
-                ? 'relative cursor-grab active:cursor-grabbing overflow-hidden file-selected shadow-sm transition hover:-translate-y-0.5 hover:shadow-md'
-                : 'relative cursor-grab active:cursor-grabbing overflow-hidden transition hover:-translate-y-0.5 hover:shadow-md',
-              cfg.card
+              'group relative cursor-pointer overflow-hidden p-0 transition hover:-translate-y-0.5 hover:shadow-md',
+              selected && 'file-selected shadow-sm',
             )}
           >
-            <div className="flex items-start justify-between gap-2">
-              <input type="checkbox" className={cn("shrink-0 accent-blue-600", cfg.checkbox)} checked={selected} onChange={() => onToggleFile?.(file)} onClick={(event) => event.stopPropagation()} />
-              <button className={cn("flex shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-white/80", cfg.menuBtn)} onClick={(event) => { event.stopPropagation(); onFileContextMenu?.(event, file) }} aria-label={`Open ${file.name} menu`}><MoreVertical className="h-4 w-4" /></button>
+            <div className="relative aspect-square w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
+              {thumbnail ? (
+                <img
+                  src={thumbnail}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover"
+                  onError={() => setBrokenThumbnails((current) => new Set(current).add(file.id ?? ''))}
+                />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center">
+                  <FileIcon file={file} className={cfg.icon} />
+                </span>
+              )}
+
+              <input
+                type="checkbox"
+                className="absolute left-1.5 top-1.5 h-4 w-4 accent-blue-600 opacity-0 transition-opacity group-hover:opacity-100 checked:opacity-100"
+                checked={selected}
+                onChange={() => onToggleFile?.(file)}
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`Select ${file.name}`}
+              />
+              <button
+                className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-lg bg-white/80 text-slate-600 opacity-0 backdrop-blur transition-opacity hover:bg-white group-hover:opacity-100 dark:bg-slate-900/80 dark:text-slate-300"
+                onClick={(event) => { event.stopPropagation(); onFileContextMenu?.(event, file) }}
+                aria-label={`Open ${file.name} menu`}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+              {/* The account badge sits on the thumbnail so it survives even at the smallest
+                  scale, where there is no room for a text line under the tile. */}
+              {file.accountEmail ? (
+                <span className="absolute bottom-1.5 right-1.5 rounded-full ring-2 ring-white/80 dark:ring-slate-900/80">
+                  <AccountAvatar email={file.accountEmail} avatarUrl={file.accountAvatarUrl} />
+                </span>
+              ) : null}
             </div>
 
-            <div className="flex justify-center mt-2">
-              <div className={cn("flex items-center justify-center rounded-2xl bg-slate-100 text-slate-700", cfg.iconShell)}>
-                <FileIcon kind={file.kind} className={cfg.icon} />
-              </div>
-            </div>
-
-            <div className={cn("min-w-0 text-center", cfg.mtCard)}>
-              <h3 className={cn("font-extrabold text-slate-950 line-clamp-2", cfg.title)} title={file.name}>{file.name}</h3>
-              <p className={cfg.date}>{file.date}</p>
-              <div className={cn("flex flex-wrap justify-center font-semibold text-slate-600", cfg.tagsShell)}>
-                <span className={cn("rounded-full bg-slate-100", cfg.tag)}>{file.size}</span>
-                <span className={cn("max-w-full truncate rounded-full bg-slate-100", cfg.tag)}>{file.access}</span>
-                <PublicBadge role={file.publicRole} />
-              </div>
+            <div className="min-w-0 px-2 py-1.5">
+              <p className={cn('truncate font-bold text-slate-950', cfg.title)} title={file.name}>{file.name}</p>
+              {/* Below the thumbnail rather than on top of it: a tile is barely wider than the
+                  badge itself, and over a photo the mark was easy to miss entirely. */}
+              {file.publicRole || (file.sharedPeopleCount ?? 0) > 0 ? (
+                <span className="mt-1 flex flex-wrap items-center gap-1"><PublicBadge role={file.publicRole} sharedPeopleCount={file.sharedPeopleCount} /></span>
+              ) : null}
+              {cfg.showMeta ? <p className={cn('truncate text-slate-500', cfg.meta)}>{type.label} · {file.size}</p> : null}
+              {cfg.showAccount && file.accountEmail ? <p className={cn('truncate text-slate-400', cfg.meta)} title={file.accountEmail}>{file.accountEmail}</p> : null}
             </div>
           </Card>
         )

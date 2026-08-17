@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent, type MouseEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Archive, CheckCircle, ClipboardPaste, Download, FolderInput, FolderPlus, LayoutGrid, List, RefreshCw, Star, Trash2, Upload, X } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { CheckCircle, ClipboardPaste, Download, FolderInput, FolderPlus, LayoutGrid, List, RefreshCw, Star, Trash2, Upload, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { DummyModal } from '@/components/drive/DummyModal'
 import { EmptyAreaContextMenu } from '@/components/drive/EmptyAreaContextMenu'
 import { FileContextMenu } from '@/components/drive/FileContextMenu'
+import { AccountAvatar } from '@/components/drive/AccountAvatar'
 import { FileDetailsDrawer } from '@/components/drive/FileDetailsDrawer'
 import { FileGrid } from '@/components/drive/FileGrid'
 import { FileTable } from '@/components/drive/FileTable'
@@ -18,13 +19,15 @@ import { API_URL, apiFetch, formatBytes, formatDate } from '@/lib/api'
 import { getAccessToken } from '@/lib/auth'
 import { createPlyr, ensurePlyr } from '@/lib/plyr'
 import { getPreviewKind, officeViewerUrl } from '@/lib/preview'
+import { googleOpenUrl } from '@/lib/file-type'
 import type { FileItem, FolderItem } from '@/data/drive-data'
 import { useUpload } from '@/context/UploadContext'
 import { useDriveLayoutActions } from '@/layouts/DriveLayout'
 
-type BackendFile = { id: string; name: string; publicRole?: 'reader' | 'commenter' | 'writer' | null; mimeType: string; sizeBytes: string; createdAt: string; folderId?: string | null; connectedAccount?: { email: string; provider: string; avatarUrl?: string | null }; folder?: { id: string; name: string } | null }
-type BackendFolder = { id: string; name: string; color: string; iconUrl?: string | null; parentId?: string | null; providerFolderId?: string | null; updatedAt: string }
+type BackendFile = { id: string; name: string; providerFileId?: string; hasThumbnail?: boolean; starredAt?: string | null; publicRole?: 'reader' | 'commenter' | 'writer' | null; sharedPeopleCount?: number; mimeType: string; sizeBytes: string; createdAt: string; folderId?: string | null; connectedAccount?: { email: string; provider: string; avatarUrl?: string | null }; folder?: { id: string; name: string } | null }
+type BackendFolder = { id: string; name: string; color: string; iconUrl?: string | null; parentId?: string | null; providerFolderId?: string | null; updatedAt: string; connectedAccount?: { email: string; provider: string; avatarUrl?: string | null } | null }
 type ConnectedAccount = { id: string; provider: string; email: string; displayName?: string | null; status: string }
+type DrivePerson = { id: string; email: string; name: string | null; photoUrl: string | null; role: string; isOwner: boolean }
 
 const sizeActiveClasses: Record<FolderSizeScale, string> = {
   xs: 'bg-white text-slate-800 dark:bg-red-500/20 dark:text-red-300 dark:border-red-500/30 shadow-sm dark:shadow-none',
@@ -36,6 +39,7 @@ const sizeActiveClasses: Record<FolderSizeScale, string> = {
 type FileViewMode = 'list' | 'grid'
 
 const fileViewStorageKey = '9drive:all-files-view-mode'
+const filePageSize = 60
 
 function getStoredFileViewMode(): FileViewMode {
   const stored = localStorage.getItem(fileViewStorageKey)
@@ -54,12 +58,15 @@ function providerLabel(provider: string | undefined) {
   return 'Google Drive'
 }
 
-function mapFile(file: BackendFile): FileItem {
-  return { id: file.id, name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, createdAt: file.createdAt, accountEmail: file.connectedAccount?.email, accountAvatarUrl: file.connectedAccount?.avatarUrl ?? undefined, accountProvider: providerLabel(file.connectedAccount?.provider), accountProviderId: file.connectedAccount?.provider, publicRole: file.publicRole ?? null, date: formatDate(file.createdAt), size: formatBytes(file.sizeBytes), access: file.connectedAccount?.email ?? providerLabel(file.connectedAccount?.provider), kind: mimeToKind(file.mimeType), shared: 1, folderId: file.folderId, folderName: file.folder?.name }
+function mapFile(file: BackendFile, thumbnailToken: string): FileItem {
+  // Served by the API rather than by Google: Drive's own thumbnail URLs expire, and an expired
+  // one turns the tile back into an icon with no way to recover.
+  const thumbnailUrl = file.hasThumbnail && thumbnailToken ? `${API_URL}/files/${file.id}/thumbnail?t=${encodeURIComponent(thumbnailToken)}` : null
+  return { id: file.id, name: file.name, mimeType: file.mimeType, providerFileId: file.providerFileId, thumbnailUrl, starred: Boolean(file.starredAt), starredDate: file.starredAt ? formatDate(file.starredAt) : undefined, sizeBytes: file.sizeBytes, createdAt: file.createdAt, accountEmail: file.connectedAccount?.email, accountAvatarUrl: file.connectedAccount?.avatarUrl ?? undefined, accountProvider: providerLabel(file.connectedAccount?.provider), accountProviderId: file.connectedAccount?.provider, publicRole: file.publicRole ?? null, sharedPeopleCount: file.sharedPeopleCount ?? 0, date: formatDate(file.createdAt), size: formatBytes(file.sizeBytes), access: file.connectedAccount?.email ?? providerLabel(file.connectedAccount?.provider), kind: mimeToKind(file.mimeType), shared: 1, folderId: file.folderId, folderName: file.folder?.name }
 }
 
 function mapFolder(folder: BackendFolder): FolderItem {
-  return { id: folder.id, name: folder.name, color: folder.color, iconUrl: folder.iconUrl, parentId: folder.parentId, providerFolderId: folder.providerFolderId, updated: `Updated ${formatDate(folder.updatedAt)}` }
+  return { id: folder.id, name: folder.name, color: folder.color, iconUrl: folder.iconUrl, parentId: folder.parentId, providerFolderId: folder.providerFolderId, updated: `Updated ${formatDate(folder.updatedAt)}`, updatedAt: formatDate(folder.updatedAt), accountEmail: folder.connectedAccount?.email, accountAvatarUrl: folder.connectedAccount?.avatarUrl ?? undefined }
 }
 
 
@@ -76,9 +83,11 @@ function FolderAppearanceFields({ color, iconUrl, onColorChange, onIconChange }:
 }
 
 export function AllFilesPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const activeFolderId = searchParams.get('folderId')
   const searchQuery = searchParams.get('q')?.trim() ?? ''
+  const accountFilterId = searchParams.get('accountId') ?? ''
   const [uploadOpen, setUploadOpen] = useState(false)
   const [folderOpen, setFolderOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -101,6 +110,10 @@ export function AllFilesPage() {
   const [previewError, setPreviewError] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [files, setFiles] = useState<FileItem[]>([])
+  const [hasMoreFiles, setHasMoreFiles] = useState(false)
+  const [loadingMoreFiles, setLoadingMoreFiles] = useState(false)
+  const loadingMoreRef = useRef(false)
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
   const [folders, setFolders] = useState<FolderItem[]>([])
   const [allFolders, setAllFolders] = useState<FolderItem[]>([])
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
@@ -155,7 +168,7 @@ export function AllFilesPage() {
     localStorage.setItem('9drive:folder-size', scale)
   }
 
-  async function loadFiles() {
+  async function fetchFilePage(offset: number) {
     const params = new URLSearchParams()
     if (activeFolderId) params.set('folderId', activeFolderId)
     if (searchQuery) params.set('q', searchQuery)
@@ -175,16 +188,44 @@ export function AllFilesPage() {
     if (startDate) params.set('startDate', startDate)
     if (endDate) params.set('endDate', endDate)
 
-    const query = params.toString()
-    const path = query ? `/files?${query}` : '/files'
-    const data = await apiFetch<{ files: BackendFile[] }>(path)
-    setFiles(data.files.map(mapFile))
+    params.set('limit', String(filePageSize))
+    params.set('offset', String(offset))
+    return apiFetch<{ files: BackendFile[]; hasMore: boolean; thumbnailToken: string }>(`/files?${params.toString()}`)
+  }
+
+  async function loadFiles() {
+    const data = await fetchFilePage(0)
+    setFiles(data.files.map((file) => mapFile(file, data.thumbnailToken)))
+    setHasMoreFiles(data.hasMore)
+  }
+
+  // Fetching a whole Drive at once is what made the page crawl; the rest arrives as the
+  // sentinel below the list comes into view.
+  async function loadMoreFiles(offset: number) {
+    if (loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    setLoadingMoreFiles(true)
+    try {
+      const data = await fetchFilePage(offset)
+      setFiles((current) => [...current, ...data.files.map((file) => mapFile(file, data.thumbnailToken))])
+      setHasMoreFiles(data.hasMore)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to load more files')
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMoreFiles(false)
+    }
   }
 
   async function loadFolders() {
-    const visiblePath = activeFolderId ? `/folders?parentId=${activeFolderId}` : '/folders'
+    const visibleParams = new URLSearchParams()
+    if (activeFolderId) visibleParams.set('parentId', activeFolderId)
+    // The account filter applies to the listing only; the "all folders" copy feeds the move
+    // and upload pickers, which must keep offering every destination.
+    if (accountFilterId) visibleParams.set('accountId', accountFilterId)
+    const visibleQuery = visibleParams.toString()
     const [visibleData, allData] = await Promise.all([
-      apiFetch<{ folders: BackendFolder[] }>(visiblePath),
+      apiFetch<{ folders: BackendFolder[] }>(visibleQuery ? `/folders?${visibleQuery}` : '/folders'),
       apiFetch<{ folders: BackendFolder[] }>('/folders?all=1'),
     ])
     setFolders(visibleData.folders.map(mapFolder))
@@ -218,7 +259,28 @@ export function AllFilesPage() {
   useEffect(() => {
     loadAll().catch((error) => setMessage(error instanceof Error ? error.message : 'Failed to load files'))
     setSelectedFileIds(new Set())
-  }, [activeFolderId, searchQuery])
+  }, [activeFolderId, searchQuery, accountFilterId])
+
+  // View state lives in the URL so it survives a reload and stays shareable. Params are
+  // edited one key at a time; replacing the whole object would drop the others.
+  function setSearchParam(key: string, value: string | null) {
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set(key, value)
+    else next.delete(key)
+    setSearchParams(next)
+  }
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current
+    if (!sentinel || !hasMoreFiles) return undefined
+    // The margin starts the next page before the sentinel is actually on screen, so scrolling
+    // does not stall waiting for the request.
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) loadMoreFiles(files.length).catch(() => undefined)
+    }, { rootMargin: '400px' })
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreFiles, files.length])
 
   useEffect(() => {
     async function loadConnectedAccounts() {
@@ -399,11 +461,11 @@ export function AllFilesPage() {
 
   function openFolder(folder: FolderItem) {
     if (!folder.id) return
-    setSearchParams(searchQuery ? { folderId: folder.id, q: searchQuery } : { folderId: folder.id })
+    setSearchParam('folderId', folder.id)
   }
 
   function openFolderById(folderId: string) {
-    setSearchParams(searchQuery ? { folderId, q: searchQuery } : { folderId })
+    setSearchParam('folderId', folderId)
   }
 
   function openEmptyContextMenu(event: MouseEvent<HTMLElement>) {
@@ -412,18 +474,33 @@ export function AllFilesPage() {
   }
 
   function closeFolder() {
-    setSearchParams(searchQuery ? { q: searchQuery } : {})
+    setSearchParam('folderId', null)
   }
 
-  async function viewFile() {
-    if (!activeFile?.id) return
+  // Double-click sends documents, spreadsheets and slides to their Google editor; the preview
+  // can only render a flat copy of those. Right-click → Preview stays on the 9Drive preview,
+  // so there is still a way to look at one without leaving the app.
+  function openFile(file: FileItem | null) {
+    if (!file?.id) return
+    const openUrl = file.providerFileId && file.accountProviderId === 'google_drive' ? googleOpenUrl(file, file.providerFileId) : null
+    if (openUrl) {
+      window.open(openUrl, '_blank', 'noopener,noreferrer')
+      setContextMenu({ x: 0, y: 0, file: null })
+      return
+    }
+    previewFile(file).catch(() => undefined)
+  }
+
+  async function previewFile(file: FileItem | null) {
+    if (!file?.id) return
+    setActiveFile(file)
     setPreviewUrl('')
     setPreviewError('')
     setPreviewLoading(true)
     setPreviewOpen(true)
     setContextMenu({ x: 0, y: 0, file: null })
     try {
-      const data = await apiFetch<{ path?: string; url: string }>(`/files/${activeFile.id}/preview-token`, { method: 'POST' })
+      const data = await apiFetch<{ path?: string; url: string }>(`/files/${file.id}/preview-token`, { method: 'POST' })
       const previewPath = data.path ?? new URL(data.url).pathname
       setPreviewUrl(`${API_URL}${previewPath}`)
     } catch (error) {
@@ -431,6 +508,10 @@ export function AllFilesPage() {
     } finally {
       setPreviewLoading(false)
     }
+  }
+
+  function viewFile() {
+    previewFile(activeFile).catch(() => undefined)
   }
 
   async function downloadFile() {
@@ -478,6 +559,18 @@ export function AllFilesPage() {
     }
   }
 
+
+  async function toggleStar(file: FileItem | null) {
+    if (!file?.id) return
+    setContextMenu({ x: 0, y: 0, file: null })
+    try {
+      await apiFetch(`/files/${file.id}`, { method: 'PATCH', body: JSON.stringify({ starred: !file.starred }) })
+      await loadFiles()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to update the star')
+      setTimeout(() => setMessage(''), 3000)
+    }
+  }
 
   async function renameFile(event: FormEvent) {
     event.preventDefault()
@@ -775,8 +868,6 @@ export function AllFilesPage() {
   }, [syncingDrive, folderSizeScale])
 
 
-  const recentFolders = folders.slice(0, 4)
-  const moreFolders = folders.slice(4)
   const activeFolder = allFolders.find((folder) => folder.id === activeFolderId)
   const folderBreadcrumbs = (() => {
     if (!activeFolder) return []
@@ -811,36 +902,45 @@ export function AllFilesPage() {
         </div>
       </div>
       {message ? <p className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-700">{message}</p> : null}
-      {!activeFolder && (recentFolders.length > 0 ? <FolderGrid items={recentFolders} mobileTwoColumns sizeScale={folderSizeScale} onFolderMenu={openFolderMenu} onFolderOpen={openFolder} onDropItem={handleDropItem} /> : <p className="mt-4 rounded-xl bg-slate-50 p-5 text-sm text-slate-500">No folders yet. Click New Folder to organize uploads.</p>)}
-      {!activeFolder && moreFolders.length > 0 ? <>
-        <h2 className="mt-4 font-extrabold text-slate-700">More Folders</h2>
-        <FolderGrid items={moreFolders} sizeScale={folderSizeScale} onFolderMenu={openFolderMenu} onFolderOpen={openFolder} onDropItem={handleDropItem} />
-      </> : null}
-      {activeFolder && folders.length > 0 ? <>
-        <h2 className="mt-4 font-extrabold text-slate-700">Folders</h2>
-        <FolderGrid items={folders} sizeScale={folderSizeScale} onFolderMenu={openFolderMenu} onFolderOpen={openFolder} onDropItem={handleDropItem} />
-      </> : null}
       <div className="mt-4 flex flex-col gap-2 sm:mt-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-3"><Button variant="soft" className="hidden sm:inline-flex"><Archive className="h-4 w-4" />Recents</Button><Button variant="soft" className="hidden sm:inline-flex"><Star className="h-4 w-4" />Starred</Button>{selectedFileIds.size > 0 ? <div className="flex w-full flex-col gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3 sm:w-auto sm:flex-row sm:items-center sm:border-0 sm:bg-transparent sm:p-0"><span className="text-sm font-extrabold text-slate-700">{selectedFileIds.size} selected</span><div className="grid grid-cols-4 gap-2 sm:flex sm:gap-3"><Button className="w-full" variant="outline" onClick={downloadBatchAsZip}><Download className="h-4 w-4" />ZIP</Button><Button className="w-full" variant="outline" onClick={() => { setMoveTab('folder'); setMoveOpen(true) }}><FolderInput className="h-4 w-4" />Move</Button><Button className="w-full" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />Delete</Button><Button className="w-full" variant="ghost" onClick={clearSelection}>Clear</Button></div></div> : null}</div>
-        <div className="flex gap-3"><Button variant={fileViewMode === 'grid' ? 'soft' : 'outline'} size="icon" aria-label="Show files as grid" aria-pressed={fileViewMode === 'grid'} onClick={() => changeFileViewMode('grid')}><LayoutGrid className="h-5 w-5" /></Button><Button variant={fileViewMode === 'list' ? 'soft' : 'outline'} size="icon" aria-label="Show files as list" aria-pressed={fileViewMode === 'list'} onClick={() => changeFileViewMode('list')}><List className="h-5 w-5" /></Button></div>
+        <div className="flex flex-wrap items-center gap-3"><Button variant="soft" className="hidden sm:inline-flex" onClick={() => navigate('/starred')}><Star className="h-4 w-4" />Starred</Button>{selectedFileIds.size > 0 ? <div className="flex w-full flex-col gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3 sm:w-auto sm:flex-row sm:items-center sm:border-0 sm:bg-transparent sm:p-0"><span className="text-sm font-extrabold text-slate-700">{selectedFileIds.size} selected</span><div className="grid grid-cols-4 gap-2 sm:flex sm:gap-3"><Button className="w-full" variant="outline" onClick={downloadBatchAsZip}><Download className="h-4 w-4" />ZIP</Button><Button className="w-full" variant="outline" onClick={() => { setMoveTab('folder'); setMoveOpen(true) }}><FolderInput className="h-4 w-4" />Move</Button><Button className="w-full" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />Delete</Button><Button className="w-full" variant="ghost" onClick={clearSelection}>Clear</Button></div></div> : null}</div>
+        <div className="flex items-center gap-3">
+          {connectedAccounts.length > 0 ? (
+            <select className="h-10 min-w-0 max-w-[15rem] rounded-xl border border-slate-200 px-3 text-sm" value={accountFilterId} onChange={(event) => setSearchParam('accountId', event.target.value)} aria-label="Filter files by storage account">
+              <option value="">All accounts</option>
+              {connectedAccounts.map((account) => <option key={account.id} value={account.id}>{account.email || account.displayName || account.id}</option>)}
+            </select>
+          ) : null}
+          <Button variant={fileViewMode === 'grid' ? 'soft' : 'outline'} size="icon" aria-label="Show files as grid" aria-pressed={fileViewMode === 'grid'} onClick={() => changeFileViewMode('grid')}><LayoutGrid className="h-5 w-5" /></Button>
+          <Button variant={fileViewMode === 'list' ? 'soft' : 'outline'} size="icon" aria-label="Show files as list" aria-pressed={fileViewMode === 'list'} onClick={() => changeFileViewMode('list')}><List className="h-5 w-5" /></Button>
+        </div>
       </div>
       {cutFolder ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-700"><ClipboardPaste className="mr-2 inline h-4 w-4" />Cut folder: {cutFolder.name}. Press Ctrl+V or right-click empty area to paste here.</p> : null}
-      {files.length === 0 ? (
+      {/* In grid view folders keep their own compact row; in list view they are rows inside
+          the table instead, so they must not be drawn twice. */}
+      {fileViewMode === 'grid' && folders.length > 0 ? <>
+        <h2 className="mt-4 font-extrabold text-slate-700">Folders</h2>
+        <FolderGrid items={folders} variant="compact" onFolderMenu={openFolderMenu} onFolderOpen={openFolder} onDropItem={handleDropItem} />
+        {files.length > 0 ? <h2 className="mt-5 font-extrabold text-slate-700">Files</h2> : null}
+      </> : null}
+      {files.length === 0 && folders.length === 0 ? (
         <Card className="mt-3 p-5 bg-white/10 backdrop-blur-sm border border-white/20 dark:bg-transparent dark:border-0 dark:p-0 dark:shadow-none">
           <p className="text-sm text-slate-500">{searchQuery ? `No files found for "${searchQuery}".` : activeFolder ? 'No files in this folder yet.' : 'No uploaded files yet. Connect Google Drive in Settings, then upload a file.'}</p>
         </Card>
       ) : (
         <Card className="mt-3 p-4 sm:p-5 bg-white/10 backdrop-blur-sm border border-white/20 dark:bg-transparent dark:border-0 dark:p-0 dark:shadow-none">
           {fileViewMode === 'grid' ? (
-            <FileGrid files={files} selectedFileIds={selectedFileIds} sizeScale={folderSizeScale} onToggleFile={toggleFileSelection} onFileContextMenu={openContext} />
+            <FileGrid files={files} selectedFileIds={selectedFileIds} sizeScale={folderSizeScale} onToggleFile={toggleFileSelection} onFileContextMenu={openContext} onFileOpen={openFile} />
           ) : (
-            <FileTable files={files} selectedFileIds={selectedFileIds} allSelected={allVisibleSelected} onToggleFile={toggleFileSelection} onToggleAll={toggleAllVisibleFiles} onFileContextMenu={openContext} />
+            <FileTable files={files} folders={folders} selectedFileIds={selectedFileIds} allSelected={allVisibleSelected} onToggleFile={toggleFileSelection} onToggleAll={toggleAllVisibleFiles} onFileContextMenu={openContext} onFileOpen={openFile} onFolderOpen={openFolder} onFolderMenu={openFolderMenu} onDropItem={handleDropItem} />
           )}
         </Card>
       )}
+      <div ref={loadMoreSentinelRef} className="h-1" />
+      {loadingMoreFiles ? <p className="mt-3 text-center text-sm text-slate-500">Loading more files...</p> : null}
       </div>
       <EmptyAreaContextMenu x={emptyContextMenu.x} y={emptyContextMenu.y} open={emptyContextMenu.open} canPasteFolder={Boolean(cutFolder)} onClose={() => setEmptyContextMenu({ x: 0, y: 0, open: false })} onUpload={() => { setUploadOpen(true); setEmptyContextMenu({ x: 0, y: 0, open: false }) }} onCreateFolder={() => { setFolderOpen(true); setEmptyContextMenu({ x: 0, y: 0, open: false }) }} onPasteFolder={() => { pasteFolder().catch((error) => setMessage(error instanceof Error ? error.message : 'Failed to paste folder')); setEmptyContextMenu({ x: 0, y: 0, open: false }) }} />
-      <FileContextMenu x={contextMenu.x} y={contextMenu.y} file={contextMenu.file} onClose={() => setContextMenu({ x: 0, y: 0, file: null })} onView={viewFile} onDownload={downloadFile} onRename={() => { setRenameValue(activeFile?.name ?? ''); setRenameOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onMove={() => { setMoveTab('folder'); setMoveOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onMoveAccount={() => { setMoveAccountError(''); setMoveAccountTargetId(''); setMoveTab('account'); setMoveOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onDetails={() => { setDetailOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onShare={shareFile} onCopyLink={copyShareLinkDirect} onInvite={inviteToFile} onDelete={() => { setDeleteOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} />
+      <FileContextMenu x={contextMenu.x} y={contextMenu.y} file={contextMenu.file} onClose={() => setContextMenu({ x: 0, y: 0, file: null })} onView={viewFile} onDownload={downloadFile} onRename={() => { setRenameValue(activeFile?.name ?? ''); setRenameOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onMove={() => { setMoveTab('folder'); setMoveOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onMoveAccount={() => { setMoveAccountError(''); setMoveAccountTargetId(''); setMoveTab('account'); setMoveOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onDetails={() => { setDetailOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} onShare={shareFile} onCopyLink={copyShareLinkDirect} onInvite={inviteToFile} onToggleStar={() => { toggleStar(activeFile).catch(() => undefined) }} onDelete={() => { setDeleteOpen(true); setContextMenu({ x: 0, y: 0, file: null }) }} />
       <FolderContextMenu x={folderContextMenu.x} y={folderContextMenu.y} folder={folderContextMenu.folder} onClose={() => setFolderContextMenu({ x: 0, y: 0, folder: null })} onCut={() => cutSelectedFolder(activeFolderForMenu)} onRename={() => { setFolderRenameValue(activeFolderForMenu?.name ?? ''); setFolderRenameColor(normalizeFolderColor(activeFolderForMenu?.color)); setFolderRenameIconUrl(activeFolderForMenu?.iconUrl ?? defaultFolderIconUrl); setFolderRenameOpen(true); setFolderContextMenu({ x: 0, y: 0, folder: null }) }} onInvite={inviteToFolder} onCopyLink={copyFolderLink} onDelete={() => { setFolderDeleteOpen(true); setFolderContextMenu({ x: 0, y: 0, folder: null }) }} />
       <FileDetailsDrawer open={detailOpen} file={activeFile} onClose={() => setDetailOpen(false)} />
 
@@ -960,13 +1060,12 @@ export function AllFilesPage() {
             <Input value={shareUrl} readOnly placeholder="No active link" />
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setShareOpen(false)}>Close</Button>
             <Button disabled={!shareUrl} onClick={copyShareLink}>{copiedShareLink ? <CheckCircle className="h-4 w-4" /> : null}{copiedShareLink ? 'Copied!' : 'Copy Link'}</Button>
           </div>
           <p className="min-h-[2.5rem] rounded-xl bg-slate-50 p-3 text-xs text-slate-500">{copiedShareLink ? 'Share link copied to clipboard.' : shareUrl ? 'Anyone holding this link can open the file through 9Drive. The file itself stays private on Google Drive.' : 'No active link for this file yet.'}</p>
 
           {activeFile?.accountProviderId === 'google_drive' && (
-            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid gap-3">
+            <div className="mt-2 pt-4 border-t border-slate-100 dark:border-slate-800 grid gap-3">
               <div>
                 <label className="text-xs font-bold text-slate-500 block mb-1">Google Drive link access</label>
                 <p className="text-xs text-slate-500 mb-2">Controls what anyone holding the Google Drive link may do. Files are private until you choose otherwise.</p>
@@ -1026,6 +1125,11 @@ export function AllFilesPage() {
               </p>
             </div>
           )}
+        </div>
+          )}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button variant="outline" onClick={() => setShareOpen(false)}>Close</Button>
         </div>
       </DummyModal>
       <DummyModal open={folderRenameOpen} title="Rename Folder" description={activeFolderForMenu?.name ?? ''} onClose={() => setFolderRenameOpen(false)}><form onSubmit={renameFolder} className="grid gap-4"><Input value={folderRenameValue} onChange={(event) => setFolderRenameValue(event.target.value)} required /><FolderAppearanceFields color={folderRenameColor} iconUrl={folderRenameIconUrl} onColorChange={setFolderRenameColor} onIconChange={setFolderRenameIconUrl} /><div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={() => setFolderRenameOpen(false)}>Cancel</Button><Button>Rename</Button></div></form></DummyModal>

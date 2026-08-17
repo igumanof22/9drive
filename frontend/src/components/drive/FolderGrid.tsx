@@ -1,9 +1,10 @@
 import { MoreVertical } from 'lucide-react'
-import type { MouseEvent } from 'react'
+import type { DragEvent, MouseEvent } from 'react'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import type { FolderItem } from '@/data/drive-data'
 import { FolderVisual } from '@/components/drive/FolderVisual'
+import { AccountAvatar } from '@/components/drive/AccountAvatar'
 
 export type FolderSizeScale = 'xs' | 'sm' | 'md' | 'lg'
 
@@ -53,6 +54,7 @@ export function FolderGrid({
   items,
   mobileTwoColumns = false,
   sizeScale = 'md',
+  variant = 'card',
   onFolderMenu,
   onFolderOpen,
   onDropItem,
@@ -60,11 +62,57 @@ export function FolderGrid({
   items: FolderItem[]
   mobileTwoColumns?: boolean
   sizeScale?: FolderSizeScale
+  variant?: 'card' | 'compact'
   onFolderMenu?: (event: MouseEvent<HTMLElement>, folder: FolderItem) => void
   onFolderOpen?: (folder: FolderItem) => void
   onDropItem?: (fileId: string, folderId: string) => void
 }) {
   const cfg = scaleConfig[sizeScale]
+
+  function handleDragOver(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>, folder: FolderItem) {
+    event.preventDefault()
+    event.currentTarget.classList.remove('bg-blue-50/50', 'border-blue-300')
+    const fileId = event.dataTransfer.getData('text/plain')
+    if (fileId && folder.id) onDropItem?.(fileId, folder.id)
+  }
+
+  // A single low row of name chips, the way Drive lists folders: they are navigation, so they
+  // should not take the vertical space the file tiles need.
+  if (variant === 'compact') {
+    return (
+      <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+        {items.map((folder) => (
+          <Card
+            key={folder.id || folder.name}
+            onClick={() => onFolderOpen?.(folder)}
+            onContextMenu={(event) => onFolderMenu?.(event, folder)}
+            onDragOver={handleDragOver}
+            onDragEnter={(event) => event.currentTarget.classList.add('bg-blue-50/50', 'border-blue-300')}
+            onDragLeave={(event) => event.currentTarget.classList.remove('bg-blue-50/50', 'border-blue-300')}
+            onDrop={(event) => handleDrop(event, folder)}
+            className="group flex cursor-pointer items-center gap-2.5 p-2.5 transition hover:shadow-md"
+          >
+            <FolderVisual folder={folder} className="h-5 w-5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-[13px] font-bold" title={folder.name}>{folder.name}</span>
+            {folder.accountEmail ? <AccountAvatar email={folder.accountEmail} avatarUrl={folder.accountAvatarUrl} /> : null}
+            <button
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
+              onClick={(event) => { event.stopPropagation(); onFolderMenu?.(event, folder) }}
+              aria-label={`Open ${folder.name} menu`}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </Card>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div className={cn('mt-6 grid', cfg.grid, mobileTwoColumns && sizeScale === 'md' && 'grid-cols-2')}>
       {items.map((folder) => (
